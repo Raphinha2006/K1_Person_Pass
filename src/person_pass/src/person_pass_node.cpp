@@ -117,7 +117,7 @@ private:
         const double t=monotonic();
         const double age=(now()-rclcpp::Time(m.header.stamp,get_clock()->get_clock_type())).seconds();
         if (!std::isfinite(age) || age<0 || age>frame_timeout_ || !fresh(odom_time_,t,config_.robot_timeout)) return;
-        int people=0; double best=-1; pp::Point person,ball;
+        double best=-1, nearest=-1; pp::Point person,ball;
         obstacles_.clear(); obstacle_time_=t-age;
         for (const auto& o : m.detected_objects) {
             if (!std::isfinite(o.confidence) || o.confidence<confidence_
@@ -125,12 +125,13 @@ private:
             const pp::Point p{o.position_projection[0],o.position_projection[1]};
             if (!pp::finite(p) || p.x<-.5 || pp::length(p)>20.0) continue;
             if (o.label=="Ball" && o.confidence>best) { best=o.confidence; ball=p; }
-            if (o.label=="Person") { ++people; person=p; }
+            if (o.label=="Person" && (nearest<0 || pp::length(p)<nearest)) {
+                nearest=pp::length(p); person=p;
+            }
             if (o.label=="Person" || o.label=="Opponent") obstacles_.push_back(pp::toOdom(p,pose_));
         }
         if (best>=0) ball_={pp::toOdom(ball,pose_),t-age};
-        if (people==1) { person_={pp::toOdom(person,pose_),t-age}; ambiguous_=false; }
-        if (people>1) { person_.stamp=-1; ambiguous_=true; }
+        if (nearest>=0) person_={pp::toOdom(person,pose_),t-age};
     }
     void request(const booster_interface::msg::BoosterApiReqMsg& api) {
         booster_msgs::msg::RpcReqMsg m;
@@ -150,7 +151,7 @@ private:
         if (stage!=pp::Stage::WaitTargets && stage!=pp::Stage::Blocked && stage!=pp::Stage::Chase
             && stage!=pp::Stage::Adjust && stage!=pp::Stage::Align && stage!=pp::Stage::Kick) return;
         double yaw=0, pitch=.35;
-        const bool ball=fresh(ball_.stamp,t,ball_timeout_), person=fresh(person_.stamp,t,person_timeout_) && !ambiguous_;
+        const bool ball=fresh(ball_.stamp,t,ball_timeout_), person=fresh(person_.stamp,t,person_timeout_);
         if (ball && person) {
             const pp::Point target=(stage==pp::Stage::Kick || static_cast<int>(t/.5)%2==0) ? i.ball : i.person;
             yaw=std::atan2(target.y,target.x); pitch=std::atan2(.8,pp::length(target));
@@ -169,7 +170,7 @@ private:
         i.recovery=recovery_; i.recovery_available=available_; i.planner=planner_;
         i.ball=pp::toRobot(ball_.odom,pose_); i.person=pp::toRobot(person_.odom,pose_);
         i.scene_valid=fresh(odom_time_,t,config_.robot_timeout) && fresh(head_time_,t,config_.robot_timeout)
-            && fresh(ball_.stamp,t,ball_timeout_) && fresh(person_.stamp,t,person_timeout_) && !ambiguous_;
+            && fresh(ball_.stamp,t,ball_timeout_) && fresh(person_.stamp,t,person_timeout_);
         if (fresh(obstacle_time_,t,frame_timeout_)) for (auto p : obstacles_) {
             p=pp::toRobot(p,pose_);
             if (p.x>0 && pp::length(p)<.6) i.blocked=true;
@@ -195,7 +196,7 @@ private:
                 {"odom_fresh",fresh(odom_time_,t,config_.robot_timeout)},
                 {"head_fresh",fresh(head_time_,t,config_.robot_timeout)},
                 {"ball_fresh",fresh(ball_.stamp,t,ball_timeout_)},
-                {"person_fresh",fresh(person_.stamp,t,person_timeout_)},{"ambiguous",ambiguous_}}.dump();
+                {"person_fresh",fresh(person_.stamp,t,person_timeout_)}}.dump();
             status_->publish(msg); status_time_=t;
             if (out.stage!=last_stage_) RCLCPP_INFO(get_logger(),"%s",msg.data.c_str());
             last_stage_=out.stage;
@@ -203,7 +204,7 @@ private:
     }
     pp::Config config_;
     pp::Controller controller_;
-    bool dry_run_=true, available_=false, ambiguous_=false;
+    bool dry_run_=true, available_=false;
     int recovery_=0, planner_=0, getup_version_=1;
     double confidence_=50, ball_timeout_=1, person_timeout_=2.5, frame_timeout_=.5, odom_scale_=.8;
     double recovery_timeout_=2.5;

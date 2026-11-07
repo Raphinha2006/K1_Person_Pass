@@ -89,7 +89,8 @@ static void run(const std::string& binary,bool preview_only) {
               && observed_messages>0,"DDS discovery and request-channel delivery");
         auto feedback_time=Clock::now()-std::chrono::seconds(2);
         int last_state=-1,last_planner=-1;
-        auto sample=[&](int state,int planner,double seconds,bool observations=true,bool feedback=true) {
+        bool reverse_people=false;
+        auto sample=[&](int state,int planner,double seconds,bool observations=true,bool feedback=true,bool multiple=false) {
             const auto end=Clock::now()+std::chrono::duration<double>(seconds);
             while (Clock::now()<end) {
                 if (feedback && (state!=last_state || planner!=last_planner
@@ -107,6 +108,14 @@ static void run(const std::string& binary,bool preview_only) {
                     object.position_projection={k ? 2.5F : .5F,0.F,0.F};
                     d.detected_objects.push_back(object);
                 }
+                if (observations && multiple) {
+                    vision_interface::msg::DetectedObject farther;
+                    farther.label="Person"; farther.confidence=95;
+                    farther.position_projection={4.F,2.F,0.F};
+                    if (reverse_people) d.detected_objects.insert(d.detected_objects.begin()+1,farther);
+                    else d.detected_objects.push_back(farther);
+                    reverse_people=!reverse_people;
+                }
                 vision->publish(d); rclcpp::spin_some(node);
                 std::this_thread::sleep_for(std::chrono::milliseconds(25));
             }
@@ -117,7 +126,10 @@ static void run(const std::string& binary,bool preview_only) {
         sample(0,2,1.2); check(soccer>0,"Soccer mode serialization");
         const int ready_planner=preview_only ? 20 : 8;
         const int exits_before=auto_kick_exits;
-        sample(0,ready_planner,1.8); check(nonzero>moving_before,"Aligned pass must produce a movement request");
+        sample(0,ready_planner,1.8,true,true,true);
+        check(nonzero>moving_before,"Aligned pass must produce a movement request");
+        check(stage=="KICK" && last_vx>0 && std::abs(last_vy)<1e-5 && std::abs(last_turn)<1e-5,
+              "Pass toward the nearest person despite a farther higher-confidence person and changing detection order");
         check(auto_kick_exits>exits_before,"Exit previous visual kick even when already in a ready mode");
         sample(0,ready_planner,1.2,false);
         check(stage=="DONE" && last_vx==0 && last_vy==0 && last_turn==0,"Expired ball must finish and stop");
