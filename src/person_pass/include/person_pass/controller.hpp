@@ -8,6 +8,7 @@ struct Point { double x = 0, y = 0; };
 inline double length(Point p) { return std::hypot(p.x, p.y); }
 inline bool finite(Point p) { return std::isfinite(p.x) && std::isfinite(p.y); }
 inline double wrap(double angle) { return std::atan2(std::sin(angle), std::cos(angle)); }
+inline bool recoveryPlanner(int planner) { return planner==10 || planner==23; }
 struct Pose { double x = 0, y = 0, yaw = 0; };
 inline Point toOdom(Point p, Pose o) {
     return {o.x + std::cos(o.yaw)*p.x - std::sin(o.yaw)*p.y,
@@ -89,12 +90,12 @@ public:
             if (i.now-boot_since_ > c_.startup_timeout) {
                 fault_=true; return emit({Stage::Fault});
             }
-            Output out{(i.recovery || i.planner==10) ? Stage::Recover : Stage::Initialize};
+            Output out{(i.recovery || recoveryPlanner(i.planner)) ? Stage::Recover : Stage::Initialize};
             out.send_velocity=was_moving_;
             if (i.recovery == 2 && i.planner == 1 && i.recovery_available
                 && (last_action_<0 || i.now-last_action_>=5) && tries_<2) {
                 out.action=Action::GetUp; ++tries_; last_action_=i.now;
-            } else if (i.recovery == 0 && i.planner != 10
+            } else if (i.recovery == 0 && !recoveryPlanner(i.planner)
                        && (last_action_<0 || i.now-last_action_>=1)) {
                 out.action=i.planner==2 ? Action::Soccer : Action::Prepare;
                 last_action_=i.now;

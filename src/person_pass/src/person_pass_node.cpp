@@ -42,6 +42,8 @@ public:
         person_timeout_=positive("person_timeout",2.5);
         frame_timeout_=positive("frame_timeout",.5);
         recovery_timeout_=positive("recovery_timeout",2.5);
+        getup_version_=fixed<int>("getup_version",1);
+        if (getup_version_<0 || getup_version_>1) throw std::invalid_argument("getup_version must be 0 or 1");
         odom_scale_=positive("odom_scale",.8);
         command_=create_publisher<booster_msgs::msg::RpcReqMsg>(
             fixed<std::string>("command_topic","/LocoApiTopicReq"),10);
@@ -182,12 +184,14 @@ private:
             exitAutoKick();
         }
         if (out.action==pp::Action::GetUp)
-            request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kGetUp,"null"));
+            request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kGetUp,
+                                                   Json{{"version",getup_version_}}.dump()));
         head(t,i,out.stage);
         if (out.stage!=last_stage_ || t-status_time_>=1) {
             std_msgs::msg::String msg;
             msg.data=Json{{"state",pp::name(out.stage)},{"dry_run",dry_run_},
-                {"recovery",recovery_},{"recovery_available",available_},{"planner",planner_},{"robot_fresh",i.robot_fresh},
+                {"recovery",recovery_},{"recovery_available",available_},{"planner",planner_},
+                {"getup_version",getup_version_},{"robot_fresh",i.robot_fresh},
                 {"odom_fresh",fresh(odom_time_,t,config_.robot_timeout)},
                 {"head_fresh",fresh(head_time_,t,config_.robot_timeout)},
                 {"ball_fresh",fresh(ball_.stamp,t,ball_timeout_)},
@@ -200,7 +204,7 @@ private:
     pp::Config config_;
     pp::Controller controller_;
     bool dry_run_=true, available_=false, ambiguous_=false;
-    int recovery_=0, planner_=0;
+    int recovery_=0, planner_=0, getup_version_=1;
     double confidence_=50, ball_timeout_=1, person_timeout_=2.5, frame_timeout_=.5, odom_scale_=.8;
     double recovery_timeout_=2.5;
     double robot_time_=-1, odom_time_=-1, head_time_=-1, obstacle_time_=-1;

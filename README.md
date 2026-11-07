@@ -22,8 +22,10 @@ Vision 输出的 `position_projection` 已在机器人坐标系中；置信度�
 → 找到唯一接球人和球 → 接近球 → 绕球调整方向 → 连续对准 0.35 秒
 → 单次推踢 → 停车。
 
-- 起身使用原 `kGetUp` 接口；不会在正在起身或正在跌倒时切换模式。
-- 起身重试仅在原版的 `planner=1` 且报告倒地时发出；`planner=10` 表示正在起身，
+- 起身使用原 `kGetUp` 接口，配置 `getup_version=1` 选择已在本机验证的 BMM 起身；
+  `0` 为基础起身实现。版本字段依据[官方接口](https://docs.booster.tech/zh-CN/docs/developer-guide/cpp/rpc/motion/)。
+  不会在正在起身或正在跌倒时切换模式。
+- 起身重试仅在原版的 `planner=1` 且报告倒地时发出；`planner=10/23` 表示两种原生起身过程，
   即使恢复状态暂时仍为倒地，也不会再次发起或切换模式。
 - 恢复状态沿用原三字节反馈，站稳要求 `recovery=0`、`planner=8` 或 `20`，与原版一致。
   `planner` 是原版使用的固件状态索引，不能与 SDK 的 `RobotMode` 数值混用。

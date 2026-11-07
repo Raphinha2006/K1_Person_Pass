@@ -18,5 +18,6 @@ person_pass_node:
     frame_timeout: 0.5
     robot_timeout: 0.8
     recovery_timeout: 2.5  # K1 recovery feedback is published at approximately 1 Hz.
+    getup_version: 1  # Firmware GetUpVersion kV2 (BMM); 0 selects the basic implementation.
     startup_timeout: 30.0
     odom_scale: 0.8

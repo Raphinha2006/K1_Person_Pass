@@ -53,7 +53,10 @@ static void run(const std::string& binary,bool preview_only) {
             ++observed_messages;
             const int api=header.at("api_id");
             Json body=text.empty() ? Json() : Json::parse(text);
-            if (api==2008) ++getups;
+            if (api==2008) {
+                check(body.at("version")==1,"Use the tested BMM get-up implementation");
+                ++getups;
+            }
             if (api==2000 && body.at("mode")==4) ++soccer;
             if (api==2038) {
                 check(body.at("start")==false && body.at("version")==2,"Only exit automatic visual kick");
@@ -110,7 +113,7 @@ static void run(const std::string& binary,bool preview_only) {
         };
         sample(2,1,1.2); check(getups>0,"Get-up request serialization");
         const int moving_before=nonzero;
-        sample(3,1,.4); check(nonzero==moving_before,"No walking during get-up");
+        sample(2,23,.4); check(nonzero==moving_before,"No walking during native BMM get-up");
         sample(0,2,1.2); check(soccer>0,"Soccer mode serialization");
         const int ready_planner=preview_only ? 20 : 8;
         const int exits_before=auto_kick_exits;
