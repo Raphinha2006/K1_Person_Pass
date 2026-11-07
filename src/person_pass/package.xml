@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>person_pass</name>
+  <version>0.1.0</version>
+  <description>Standalone visual person passing with existing K1 motion APIs.</description>
+  <maintainer email="3055450382@qq.com">Yue Hu</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>booster_interface</depend>
+  <depend>booster_msgs</depend>
+  <depend>vision_interface</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
