@@ -17,5 +17,6 @@ person_pass_node:
     person_timeout: 2.5
     frame_timeout: 0.5
     robot_timeout: 0.8
+    recovery_timeout: 2.5  # K1 recovery feedback is published at approximately 1 Hz.
     startup_timeout: 30.0
     odom_scale: 0.8

@@ -41,6 +41,7 @@ public:
         ball_timeout_=positive("ball_timeout",1.0);
         person_timeout_=positive("person_timeout",2.5);
         frame_timeout_=positive("frame_timeout",.5);
+        recovery_timeout_=positive("recovery_timeout",2.5);
         odom_scale_=positive("odom_scale",.8);
         command_=create_publisher<booster_msgs::msg::RpcReqMsg>(
             fixed<std::string>("command_topic","/LocoApiTopicReq"),10);
@@ -162,7 +163,7 @@ private:
     void tick() {
         const double t=monotonic();
         pp::Input i;
-        i.now=t; i.robot_fresh=fresh(robot_time_,t,config_.robot_timeout);
+        i.now=t; i.robot_fresh=fresh(robot_time_,t,recovery_timeout_);
         i.recovery=recovery_; i.recovery_available=available_; i.planner=planner_;
         i.ball=pp::toRobot(ball_.odom,pose_); i.person=pp::toRobot(person_.odom,pose_);
         i.scene_valid=fresh(odom_time_,t,config_.robot_timeout) && fresh(head_time_,t,config_.robot_timeout)
@@ -201,6 +202,7 @@ private:
     bool dry_run_=true, available_=false, ambiguous_=false;
     int recovery_=0, planner_=0;
     double confidence_=50, ball_timeout_=1, person_timeout_=2.5, frame_timeout_=.5, odom_scale_=.8;
+    double recovery_timeout_=2.5;
     double robot_time_=-1, odom_time_=-1, head_time_=-1, obstacle_time_=-1;
     double head_command_time_=-1, status_time_=-1;
     pp::Pose pose_;

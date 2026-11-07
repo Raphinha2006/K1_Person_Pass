@@ -6,7 +6,8 @@
 
 ## 保留的内容
 
-- 原 Vision 源码、K1 相机标定及当前配置使用的两个 TensorRT 模型，未修改视觉算法。
+- 原 Vision、K1 相机标定及当前配置使用的两个 TensorRT 模型，未修改视觉算法。
+  修复原 Vision 关闭录制时访问空日志对象的启动崩溃。
 - `booster_interface`、`booster_msgs`、`vision_interface` 三个原有接口包。
 - 一个新增 C++ 控制包 `src/person_pass`。
 
@@ -25,6 +26,7 @@ Vision 输出的 `position_projection` 已在机器人坐标系中；置信度�
 - 恢复状态沿用原三字节反馈，站稳要求 `recovery=0`、`planner=8` 或 `20`，与原版一致。
   `planner` 是原版使用的固件状态索引，不能与 SDK 的 `RobotMode` 数值混用。
 - 未站稳时不发非零速度；模式转换最多等待 30 秒，起身最多请求两次。
+- 真机恢复状态实测约 1 Hz，使用独立的 `recovery_timeout=2.5` 秒；头部和里程计使用 0.8 秒超时。
 - 站稳确认阶段退出旧的自动视觉射门，后续由本节点显式发送速度控制。
 - 人或球过期、多人、状态丢失、近距离人/对手机器人遮挡时停车。
   视野暂时没有目标时只转头搜索，不盲目走动。
@@ -42,9 +44,13 @@ Vision 输出的 `position_projection` 已在机器人坐标系中；置信度�
 ./scripts/build.sh
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-colcon test --packages-select person_pass --event-handlers console_direct+
+colcon test --packages-select person_pass vision --event-handlers console_direct+
 colcon test-result --verbose
 ```
+
+两项 `person_pass` 检查使用模拟检测，不能替代真实 Vision 启动检查。
+`vision_no_recording_startup` 在 K1 上实际加载 GPU 模型，并以 `save_data=false` 启动和退出 Vision；
+使用隔离的 ROS domain 83，不启动传球控制节点。合计应为三项检查。
 
 ## 审核后启动
 

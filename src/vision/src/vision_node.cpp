@@ -183,7 +183,7 @@ void VisionNode::Init(const std::string &cfg_template_path, const std::string &c
     bool save_data_nonstationary = as_or<bool>(node["misc"]["save_data_nonstationary"], true);
     std::string log_root = std::string(std::getenv("HOME")) + "/Workspace/vision_log/" + getTimeString();
     data_logger_ = save_data_ ? std::make_shared<DataLogger>(log_root, save_data_nonstationary) : nullptr;
-    data_logger_->LogYAML(node, "vision_local.yaml");
+    if (data_logger_) data_logger_->LogYAML(node, "vision_local.yaml");
     seg_data_syncer_ = std::make_shared<DataSyncer>(false);
 
 

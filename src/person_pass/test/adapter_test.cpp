@@ -46,10 +46,11 @@ static void run(const std::string& binary,bool preview_only) {
         auto odom=node->create_publisher<booster_interface::msg::Odometer>("/odometer_state",10);
         auto head=node->create_publisher<booster_interface::msg::LowState>("/low_state",10);
         auto vision=node->create_publisher<vision_interface::msg::Detections>("/booster_soccer/detection",10);
-        int hardware_messages=0, getups=0, soccer=0, nonzero=0, auto_kick_exits=0;
+        int hardware_messages=0, getups=0, soccer=0, nonzero=0, auto_kick_exits=0, observed_messages=0;
         double last_vx=0,last_vy=0,last_turn=0;
         std::string stage;
         auto record=[&](const Json& header,const std::string& text) {
+            ++observed_messages;
             const int api=header.at("api_id");
             Json body=text.empty() ? Json() : Json::parse(text);
             if (api==2008) ++getups;
@@ -78,16 +79,21 @@ static void run(const std::string& binary,bool preview_only) {
             [&](const std_msgs::msg::String& m) { stage=Json::parse(m.data).at("state"); });
         auto deadline=Clock::now()+std::chrono::seconds(8);
         while ((recovery->get_subscription_count()==0 || preview->get_publisher_count()==0
-                || rpc->get_publisher_count()==0) && Clock::now()<deadline) {
+                || rpc->get_publisher_count()==0 || observed_messages==0) && Clock::now()<deadline) {
             rclcpp::spin_some(node); std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
-        check(recovery->get_subscription_count()>0 && rpc->get_publisher_count()>0,"DDS discovery");
+        check(recovery->get_subscription_count()>0 && rpc->get_publisher_count()>0
+              && observed_messages>0,"DDS discovery and request-channel delivery");
+        auto feedback_time=Clock::now()-std::chrono::seconds(2);
+        int last_state=-1,last_planner=-1;
         auto sample=[&](int state,int planner,double seconds,bool observations=true,bool feedback=true) {
             const auto end=Clock::now()+std::chrono::duration<double>(seconds);
             while (Clock::now()<end) {
-                if (feedback) {
+                if (feedback && (state!=last_state || planner!=last_planner
+                    || Clock::now()-feedback_time>=std::chrono::seconds(1))) {
                     booster_interface::msg::RawBytesMsg r; r.msg={static_cast<uint8_t>(state),1,static_cast<uint8_t>(planner)};
                     recovery->publish(r);
+                    feedback_time=Clock::now(); last_state=state; last_planner=planner;
                 }
                 booster_interface::msg::Odometer o; odom->publish(o);
                 booster_interface::msg::LowState h; h.motor_state_serial.resize(2); head->publish(h);
@@ -114,12 +120,12 @@ static void run(const std::string& binary,bool preview_only) {
         check(stage=="DONE" && last_vx==0 && last_vy==0 && last_turn==0,"Expired ball must finish and stop");
         const int finished_count=nonzero;
         sample(0,ready_planner,.5); check(nonzero==finished_count,"No second pass after completion");
-        sample(0,ready_planner,1.2,true,false);
+        sample(0,ready_planner,2.8,true,false);
         check(stage=="WAIT_ROBOT" && last_vx==0,"Expired robot feedback must stop");
         check(preview_only ? hardware_messages==0 : hardware_messages>0,"Dry-run interception / remapped output");
         stopChild(child); child=-1;
         rclcpp::shutdown();
-        std::cout << "PASS ROS adapter: " << (preview_only ? "dry-run intercepts every RPC" : "RPC output remapped to isolated test topic") << '\n';
+        std::cout << "PASS ROS adapter with 1 Hz recovery feedback: " << (preview_only ? "dry-run intercepts every RPC" : "RPC output remapped to isolated test topic") << '\n';
     } catch (...) {
         stopChild(child); if (rclcpp::ok()) rclcpp::shutdown(); throw;
     }

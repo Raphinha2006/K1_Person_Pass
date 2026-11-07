@@ -84,4 +84,11 @@ install(DIRECTORY model
   DESTINATION share/${PROJECT_NAME})
 
 ament_export_include_directories(include)
+include(CTest)
+if(BUILD_TESTING)
+  add_test(NAME vision_no_recording_startup
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_startup.sh"
+      "$<TARGET_FILE:vision_node>" "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+  set_tests_properties(vision_no_recording_startup PROPERTIES TIMEOUT 30)
+endif()
 ament_package()
