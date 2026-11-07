@@ -3,11 +3,18 @@ person_pass_node:
     dry_run: true  # Preview all requests; no mode, head, get-up or movement RPC is sent.
     auto_start: true
     visual_kick_version: 1  # SDK VisualKickVersion::kV2; valid wire values are 0 and 1.
-    kick_power: 1.5  # Firmware requested range; actual travel distance still needs calibration.
+    # Firmware visual-kick power is a 1..10 strength, not a distance. Start from
+    # one power unit per metre of ball-to-receiver distance and calibrate on the floor.
+    kick_power_gain: 1.2   # Proportional: 5 m -> power 6.0
+    kick_power_offset: 0.0
+    kick_power_min: 1.0
+    kick_power_max: 10.0
     kick_duration: 7.0  # Maximum native-skill attempt window, not a walking duration.
+    kick_cooldown: 2.0  # Pause after an attempt before looking for the ball again; loops forever.
     confidence_threshold: 50.0
     ball_timeout: 1.0
     person_timeout: 2.5
+    person_max_range: 10.0  # Ignore far false positives; the pass target must be plausible.
     frame_timeout: 0.5
     robot_timeout: 0.8
     recovery_timeout: 2.5  # K1 recovery feedback is published at approximately 1 Hz.

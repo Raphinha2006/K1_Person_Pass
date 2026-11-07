@@ -37,7 +37,7 @@ static void stopChild(pid_t child) {
 static void run(const std::string& binary,bool preview_only) {
     setenv("ROS_DOMAIN_ID","83",1);
     std::vector<std::string> args={binary,"--ros-args","-p",
-        std::string("dry_run:=")+(preview_only ? "true" : "false"),"-p","kick_duration:=4.0","-r",
+        std::string("dry_run:=")+(preview_only ? "true" : "false"),"-p","kick_duration:=4.0","-p","kick_cooldown:=60.0","-r",
         "/LocoApiTopicReq:=/person_pass_test/requests","-r","/kick_ball:=/person_pass_test/kick_ball",
         "-r","/LocoApiTopicResp:=/person_pass_test/responses"};
     std::vector<char*> argv; for (auto& s : args) argv.push_back(s.data()); argv.push_back(nullptr);
@@ -79,27 +79,44 @@ static void run(const std::string& binary,bool preview_only) {
                 if (std::abs(last_vx)+std::abs(last_vy)+std::abs(last_turn)>1e-5) ++nonzero;
             }
         };
+        auto respond=[&](const std::string& uuid,const Json& header,const std::string& body) {
+            const int api=header.at("api_id");
+            if (api==2017) {
+                booster_msgs::msg::RpcRespMsg response;
+                response.uuid=uuid; response.header=Json{{"status",0}}.dump();
+                response.body=Json{{"mode",soccer>0 ? 4 : 2}}.dump();
+                responses->publish(response);
+                return;
+            }
+            const bool kick=api==2038 && Json::parse(body).at("start")==true;
+            const bool mode=api==2000 && Json::parse(body).at("mode")==4;
+            if (kick || mode) {
+                if (kick) last_kick_uuid=uuid;
+                booster_msgs::msg::RpcRespMsg response;
+                response.uuid=uuid; response.header=Json{{"status",0}}.dump();
+                responses->publish(response);
+            }
+        };
         auto rpc=node->create_subscription<booster_msgs::msg::RpcReqMsg>("/person_pass_test/requests",100,
             [&](const booster_msgs::msg::RpcReqMsg& m) {
                 ++hardware_messages;
                 check(m.uuid.size()==36 && m.uuid[14]=='4',"Canonical request UUID");
                 record(Json::parse(m.header),m.body);
-                if (Json::parse(m.header).at("api_id")==2038 && Json::parse(m.body).at("start")==true) {
-                    last_kick_uuid=m.uuid;
-                    booster_msgs::msg::RpcRespMsg response;
-                    response.uuid=m.uuid; response.header=Json{{"status",0}}.dump();
-                    responses->publish(response);
-                }
+                respond(m.uuid,Json::parse(m.header),m.body);
             });
         auto preview=node->create_subscription<std_msgs::msg::String>("/person_pass/preview",100,
-            [&](const std_msgs::msg::String& m) { auto j=Json::parse(m.data); record(j.at("header"),j.at("body")); });
+            [&](const std_msgs::msg::String& m) {
+                auto j=Json::parse(m.data); record(j.at("header"),j.at("body"));
+                respond(j.at("uuid"),j.at("header"),j.at("body"));
+            });
         auto target_record=[&](const brain::msg::Kick& m) {
             ++target_messages;
-            check(std::abs(m.x-.5)<1e-5 && std::abs(m.y-.1)<1e-5,"Native skill receives ball coordinates");
-            check(std::abs(m.goal_x-2.5)<1e-5 && std::abs(m.goal_y-.6)<1e-5
-                  && std::abs(m.dir-std::atan2(.5,2.0))<1e-5,
+            check(std::abs(m.x-.5)<1e-5 && std::abs(m.y-.05)<1e-5,"Native skill receives ball coordinates");
+            check(std::abs(m.goal_x-2.5)<1e-5 && std::abs(m.goal_y-.3)<1e-5
+                  && std::abs(m.dir-std::atan2(.25,2.0))<1e-5,
                   "Native goal and direction select nearest person, never the farther person");
-            check(std::abs(m.power-1.5)<1e-5,"Forward configured firmware kick power");
+            check(std::abs(m.power-std::hypot(2.0,.25))<1e-5,
+                  "Scale firmware power with the ball-to-receiver distance");
         };
         auto kick_target=node->create_subscription<brain::msg::Kick>("/person_pass_test/kick_ball",100,
             [&](const brain::msg::Kick& m) { ++hardware_targets; target_record(m); });
@@ -117,7 +134,8 @@ static void run(const std::string& binary,bool preview_only) {
         auto feedback_time=Clock::now()-std::chrono::seconds(2);
         int last_state=-1,last_planner=-1;
         bool reverse_people=false;
-        auto sample=[&](int state,int planner,double seconds,bool observations=true,bool feedback=true,bool multiple=false) {
+        auto sample=[&](int state,int planner,double seconds,bool observations=true,
+                        bool feedback=true,bool multiple=false,bool person=true) {
             const auto end=Clock::now()+std::chrono::duration<double>(seconds);
             while (Clock::now()<end) {
                 if (feedback && (state!=last_state || planner!=last_planner
@@ -129,10 +147,10 @@ static void run(const std::string& binary,bool preview_only) {
                 booster_interface::msg::Odometer o; odom->publish(o);
                 booster_interface::msg::LowState h; h.motor_state_serial.resize(2); head->publish(h);
                 vision_interface::msg::Detections d; d.header.stamp=node->now();
-                if (observations) for (int k=0;k<2;++k) {
+                if (observations) for (int k=0;k<(person ? 2 : 1);++k) {
                     vision_interface::msg::DetectedObject object;
                     object.label=k ? "Person" : "Ball"; object.confidence=90;
-                    object.position_projection={k ? 2.5F : .5F,k ? .6F : .1F,0.F};
+                    object.position_projection={k ? 2.5F : .5F,k ? .3F : .05F,0.F};
                     d.detected_objects.push_back(object);
                 }
                 if (observations && multiple) {
@@ -147,12 +165,14 @@ static void run(const std::string& binary,bool preview_only) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(25));
             }
         };
-        sample(2,1,1.2); check(getups>0,"Get-up request serialization");
+        sample(2,1,1.2,true,true,false,false); check(getups>0,"Get-up request serialization");
         const int moving_before=nonzero;
-        sample(2,23,.4); check(nonzero==moving_before,"No walking during native BMM get-up");
-        sample(0,2,1.2); check(soccer>0,"Soccer mode serialization");
+        sample(2,23,.4,true,true,false,false); check(nonzero==moving_before,"No walking during native BMM get-up");
+        sample(0,2,1.2,true,true,false,false); check(soccer>0,"Soccer mode serialization");
         const int ready_planner=preview_only ? 20 : 8;
         const int exits_before=auto_kick_exits;
+        sample(0,ready_planner,1.0,true,true,false,false);
+        check(stage=="WAIT_TARGETS" && auto_kick_starts==0,"Ball without a receiver must not start a pass");
         sample(0,ready_planner,1.8,true,true,true);
         check(nonzero==0,"Do not push the ball with nonzero Move requests");
         check(stage=="KICK" && auto_kick_starts==1 && target_messages>0,
@@ -164,11 +184,12 @@ static void run(const std::string& binary,bool preview_only) {
               "Accept native planner 12 without issuing Move or restarting the skill");
         const int exits_during=auto_kick_exits;
         sample(0,12,1.2,false);
-        check(stage=="DONE" && last_vx==0 && last_vy==0 && last_turn==0,"Expired ball must finish and stop");
-        check(auto_kick_exits==exits_during+1,"Target loss explicitly exits the native skill");
-        const int finished_count=nonzero;
-        sample(0,ready_planner,.5); check(nonzero==finished_count,"No second pass after completion");
-        check(auto_kick_starts==1,"Completed attempt must not automatically restart native kick");
+        check(stage=="KICK" && auto_kick_exits==exits_during,
+              "Target loss must not cancel the native swing");
+        sample(0,12,2.6,false);
+        check(stage=="WAIT_TARGETS" && last_vx==0 && last_vy==0 && last_turn==0,
+              "Skill must end on its own timeout and return to waiting");
+        check(auto_kick_exits==exits_during+1,"Timeout explicitly exits the native skill");
         for (bool value : {false,true}) {
             auto req=std::make_shared<std_srvs::srv::SetBool::Request>(); req->data=value;
             auto future=enable->async_send_request(req);
@@ -176,7 +197,7 @@ static void run(const std::string& binary,bool preview_only) {
                   ==rclcpp::FutureReturnCode::SUCCESS,"Enable service response");
         }
         sample(0,ready_planner,1.1);
-        check(auto_kick_starts==2 && stage=="KICK","Explicit reset starts a new native attempt");
+        check(auto_kick_starts>=2 && stage=="KICK","Explicit reset starts a new native attempt");
         const int exits_after_loss=auto_kick_exits;
         auto disable=std::make_shared<std_srvs::srv::SetBool::Request>(); disable->data=false;
         auto stopped=enable->async_send_request(disable);
@@ -200,13 +221,12 @@ static void run(const std::string& binary,bool preview_only) {
                   ==rclcpp::FutureReturnCode::SUCCESS,"Reset before rejected-request check");
         }
         sample(0,ready_planner,1.1);
-        check(stage=="KICK" && auto_kick_starts==4,"New request before simulated firmware rejection");
+        check(stage=="KICK" && auto_kick_starts>=4,"New request before simulated firmware rejection");
         booster_msgs::msg::RpcRespMsg rejected;
         rejected.uuid=last_kick_uuid; rejected.header=Json{{"status",502}}.dump();
         responses->publish(rejected);
         sample(0,ready_planner,.3);
-        if (!preview_only)
-            check(stage=="DISABLED" && last_vx==0,"Firmware refusal must disable and exit the skill");
+        check(stage=="DISABLED" && last_vx==0,"Firmware refusal must disable and exit the skill");
         check(preview_only ? hardware_messages==0 : hardware_messages>0,"Dry-run interception / remapped output");
         check(preview_only ? hardware_targets==0 : hardware_targets>0,"Dry-run never feeds targets to the hardware skill");
         stopChild(child); child=-1;
