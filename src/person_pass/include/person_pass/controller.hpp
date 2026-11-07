@@ -89,12 +89,13 @@ public:
             if (i.now-boot_since_ > c_.startup_timeout) {
                 fault_=true; return emit({Stage::Fault});
             }
-            Output out{i.recovery ? Stage::Recover : Stage::Initialize};
+            Output out{(i.recovery || i.planner==10) ? Stage::Recover : Stage::Initialize};
             out.send_velocity=was_moving_;
-            if (i.recovery == 2 && i.recovery_available
+            if (i.recovery == 2 && i.planner == 1 && i.recovery_available
                 && (last_action_<0 || i.now-last_action_>=5) && tries_<2) {
                 out.action=Action::GetUp; ++tries_; last_action_=i.now;
-            } else if (i.recovery == 0 && (last_action_<0 || i.now-last_action_>=1)) {
+            } else if (i.recovery == 0 && i.planner != 10
+                       && (last_action_<0 || i.now-last_action_>=1)) {
                 out.action=i.planner==2 ? Action::Soccer : Action::Prepare;
                 last_action_=i.now;
             }

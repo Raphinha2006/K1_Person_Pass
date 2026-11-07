@@ -47,10 +47,21 @@ int main() {
         fallen.enable(false); fallen.enable(true); check(fallen.tick(i).stage==Stage::Settle,"Explicit reset clears fault");
         Controller unavailable; unavailable.enable(true); i=scene(); i.recovery=2;
         check(unavailable.tick(i).action==Action::None,"Respect recovery availability");
-        Controller attempts; attempts.enable(true); i=scene(); i.recovery=2; i.recovery_available=true;
+        Controller attempts; attempts.enable(true); i=scene(); i.recovery=2; i.recovery_available=true; i.planner=1;
         check(attempts.tick(i).action==Action::GetUp,"First get-up request");
         i.now=6; check(attempts.tick(i).action==Action::GetUp,"Second bounded get-up request");
         i.now=12; check(attempts.tick(i).action==Action::None,"No unbounded get-up retries");
+        Controller in_progress; in_progress.enable(true); i=scene();
+        i.recovery=2; i.recovery_available=true; i.planner=1;
+        check(in_progress.tick(i).action==Action::GetUp,"Begin native get-up");
+        i.now=6; i.planner=10;
+        o=in_progress.tick(i);
+        check(o.stage==Stage::Recover && o.action==Action::None && stopped(o),
+              "Do not retry while planner 10 is active even if recovery still says fallen");
+        i.now=7; i.recovery=0;
+        check(in_progress.tick(i).action==Action::None,"Do not change mode during planner 10");
+        i.now=8; i.recovery=2; i.planner=1;
+        check(in_progress.tick(i).action==Action::GetUp,"Retry only after native get-up returns to planner 1");
         Controller pass; Input active; o=startKick(pass,active);
         check(o.vx<=.4 && o.vy<=.3,"Kick must obey limits on its first command");
         active.now=3.1; check(pass.tick(active).stage==Stage::Done,"Single kick must time out");
