@@ -2,7 +2,11 @@
 
 本项目从真机修改前基线 `ade91251cd3156691040db39c17f1667c709f6e6` 提取依赖。
 原目录 `Booster_K1_3v3_Demo` 和原版副本 `AAA` 保持不变。
-当前版本供代码审查，尚未做实机动作验收，也未推送 GitHub。
+已在 K1 上进行基础交互测试，用户现场确认具备找人和踢球能力；落点、距离和稳定性留待后续优化。
+
+快速启动见 [简短运行说明](RUN.md)，后续控制调整思路见 [日志分析笔记](docs/PASS_CONTROL_NOTES.md)。
+
+运行环境为 Booster K1、ROS 2 Humble 及机器人现有 SDK。相机标定和 TensorRT 模型沿用本机配置。
 
 ## 保留的内容
 
@@ -57,7 +61,7 @@ colcon test-result --verbose
 `vision_no_recording_startup` 在 K1 上实际加载 GPU 模型，并以 `save_data=false` 启动和退出 Vision；
 使用隔离的 ROS domain 83，不启动传球控制节点。合计应为三项检查。
 
-## 审核后启动
+## 启动
 
 默认预览模式：
 
@@ -86,5 +90,5 @@ ros2 service call /person_pass/enable std_srvs/srv/SetBool '{data: true}'
 ```
 
 参数在 `config/person_pass.yaml`。默认速度上限为前进 0.4 m/s、侧移 0.3 m/s、转向 0.6 rad/s；
-出球速度参数 0.35 m/s。最低有效速度沿用原 demo 的限制方式，实际行走表现仍需验证。
+出球速度参数 0.35 m/s。最低有效速度沿用原 demo 的限制方式，后续按真机响应继续标定。
 启动参数为只读，修改配置后需要重启；运行中启停使用上述服务。
