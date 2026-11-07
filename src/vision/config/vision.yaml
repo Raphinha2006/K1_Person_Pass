@@ -1,0 +1,87 @@
+camera:
+  color_topic: /boostercamera/head/rgb
+  depth_topic: /boostercamera/head/depth
+  intrin_topic: /boostercamera/head/rgb/camera_info
+  intrin:
+    fx: 207.023026
+    fy: 207.023026
+    cx: 259.476715
+    cy: 216.151062
+    distortion_model: 0
+    distortion_coeffs:
+      []
+  extrin:
+    -
+      - 0.046338357
+      - 0.00609953143
+      - 0.998907149
+      - -0.00199684175
+    -
+      - -0.998887777
+      - -0.00844762847
+      - 0.0463890359
+      - 0.0544065535
+    -
+      - 0.0087213479
+      - -0.99994576
+      - 0.00570129836
+      - -0.0111596119
+    -
+      - 0
+      - 0
+      - 0
+      - 1
+  pitch_compensation: 0
+  yaw_compensation: 0
+  z_compensation: 0
+detection_model:
+  model_path: ./src/vision/model/best_digua_second_10.3.engine
+  confidence_threshold: 0.2
+  nms_threshold: 0.4
+  classnames: [Ball, Goalpost, Person, LCross, TCross, XCross, PenaltyPoint, Opponent, BRMarker]
+  post_process:
+    single_ball_assumption: false
+    confidence_thresholds:
+      Ball: 0.2
+      Goalpost: 0.2
+      Person: 0.2
+      LCross: 0.1
+      TCross: 0.1
+      XCross: 0.1
+      PenaltyPoint: 0.1
+      Opponent: 0.5
+      BRMarker: 0.2
+segmentation_model:
+  model_path: ./src/vision/model/best_seg_orin_10.3.engine
+  confidence_threshold: 0.3
+  nms_threshold: 0.9
+use_depth: false
+ball_pose_estimator:
+  use_depth: false
+  radius: 0.109
+  down_sample_leaf_size: 0.01
+  cluster_distance_threshold: 0.01
+  fitting_distance_threshold: 0.01
+  minimum_cluster_size: 150
+  filter_distance: 1.2
+  check_ball_height: true
+human_like_pose_estimator:
+  use_depth: false
+  down_sample_leaf_size: 0.01
+  fitting_distance_threshold: 0.01
+  statistic_outlier_multiplier: 0.01
+field_marker_pose_estimator:
+  refine: false
+  line_segment_area_threshold: 75
+calibration:
+  sync_max_time_diff_ms: 1400
+  offset:
+    exclude_distance: 2.0
+    zero_translation: true
+    field_marker_path: ./src/vision/config/field.yaml
+  handeye:
+    calibration_time: 2026-06-17-17-10-20
+    reprojection_error: 3.2132188327929985
+misc:
+  save_data_nonstationary: true
+robot_name: ""
