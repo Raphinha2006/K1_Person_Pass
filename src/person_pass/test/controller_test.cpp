@@ -13,9 +13,9 @@ static Input scene(double t=0) {
 }
 static Output startKick(Controller& c,Input& i) {
     c.enable(true); i=scene(); c.tick(i);
-    i.now=.6; check(c.tick(i).stage==Stage::Align,"Must settle before kicking");
-    i.now=1.0; auto out=c.tick(i);
-    check(out.stage==Stage::Kick && out.vx>0,"Must kick after stable alignment");
+    i.now=.6; auto out=c.tick(i);
+    check(out.stage==Stage::Kick && out.action==Action::StartKick && stopped(out),
+          "Direct native kick starts once without a walking push");
     return out;
 }
 int main() {
@@ -37,7 +37,7 @@ int main() {
         check(boot.tick(i).stage==Stage::Settle,"Wait for stable readiness");
         Controller walking; walking.enable(true); i=scene(); i.planner=8;
         check(walking.tick(i).stage==Stage::Settle,"Accept the original ready walking planner");
-        i.now=.6; check(walking.tick(i).stage==Stage::Align,"Walking mode must allow the pass sequence");
+        i.now=.6; check(walking.tick(i).action==Action::StartKick,"Walking mode must allow direct kick");
         Controller fallen; fallen.enable(true); i=scene(); i.recovery=2; i.recovery_available=true; i.planner=1;
         o=fallen.tick(i); check(o.action==Action::GetUp && stopped(o),"Get up without walking");
         i.now=1; i.recovery=3;
@@ -65,43 +65,46 @@ int main() {
             check(in_progress.tick(i).action==Action::GetUp,"Retry only after native get-up returns to planner 1");
         }
         Controller pass; Input active; o=startKick(pass,active);
-        check(o.vx<=.4 && o.vy<=.3,"Kick must obey limits on its first command");
-        active.now=3.1; check(pass.tick(active).stage==Stage::Done,"Single kick must time out");
-        pass.enable(true); active.now=4;
+        check(stopped(o),"Starting native kick must not push the ball with Move");
+        for (int planner : {20,12,22}) {
+            active.now=.7; active.planner=planner; o=pass.tick(active);
+            check(o.stage==Stage::Kick && o.action==Action::None && !o.send_velocity,
+                  "Do not restart, send Move or switch modes while the native kick owns control");
+        }
+        active.now=7.7; check(pass.tick(active).stage==Stage::Done,"Single kick must time out");
+        pass.enable(true); active.now=8;
         check(stopped(pass.tick(active)) && pass.tick(active).stage==Stage::Done,"Repeated enable=true must not rearm");
         pass.enable(false); check(pass.tick(active).stage==Stage::Disabled,"Disable stops");
+        active.planner=20;
         pass.enable(true); check(pass.tick(active).stage==Stage::Settle,"False->true starts a new attempt");
         for (int reason=0; reason<5; ++reason) {
             Controller abort; Input x; startKick(abort,x); x.now=1.1;
             if (reason==0) x.scene_valid=false;
             if (reason==1) x.blocked=true;
-            if (reason==2) x.ball={.9,0};
-            if (reason==3) x.person={2.5,2};
+            if (reason==2) x.ball.x=std::numeric_limits<double>::quiet_NaN();
+            if (reason==3) x.recovery=3;
             if (reason==4) x.robot_fresh=false;
             check(stopped(abort.tick(x)),"Interrupted kick must stop immediately");
             x=scene(2); abort.tick(x); x.now=3;
             check(abort.tick(x).stage==Stage::Done,"Interrupted kick must not repeat");
         }
         for (double y : {-1.0,1.0}) {
-            Controller side; side.enable(true); i=scene(); side.tick(i);
-            i.now=.6; i.person.y=y; o=side.tick(i);
-            check(o.stage==Stage::Adjust,"Off-axis person requires adjustment");
-            check(o.vy*y<0,"Move to the opposite side of the ball from the receiver");
+            Controller direct; direct.enable(true); i=scene(); direct.tick(i);
+            i.now=.6; i.ball={5,1}; i.person={3,y}; o=direct.tick(i);
+            check(o.stage==Stage::Kick && o.action==Action::StartKick,
+                  "Distant, off-axis ball/person bypass former distance and alignment gates");
         }
-        Controller chase; chase.enable(true); i=scene(); chase.tick(i);
-        i.now=.6; i.ball={5,0}; i.person={7,0}; o=chase.tick(i);
-        check(o.stage==Stage::Chase && o.vx>0,"Approach a distant ball");
-        i.person={3,0}; o=chase.tick(i);
-        check(o.stage==Stage::Chase && o.turn!=0,"Circle around instead of walking straight through the ball");
-        i.scene_valid=false; check(stopped(chase.tick(i)),"Missing person or ball must stop chase");
+        Controller waiting; waiting.enable(true); i=scene(); waiting.tick(i);
+        i.now=.6; i.scene_valid=false;
+        check(waiting.tick(i).stage==Stage::WaitTargets,"Missing targets must prevent a start");
         i.scene_valid=true; i.blocked=true;
-        check(chase.tick(i).stage==Stage::Blocked,"Nearby obstacles must stop chase");
-        i.blocked=false; i.ball.x=std::numeric_limits<double>::quiet_NaN();
-        check(stopped(chase.tick(i)),"Invalid positions must not produce motion");
-        bool rejected=false; try { Config c; c.kick_speed=2; Controller invalid(c); }
+        check(waiting.tick(i).stage==Stage::Blocked,"Nearby obstacles must prevent a start");
+        i.blocked=false; i.person={.7,0};
+        check(waiting.tick(i).stage==Stage::WaitTargets,"Keep person-ball minimum separation");
+        bool rejected=false; try { Config c; c.kick_duration=0; Controller invalid(c); }
         catch (const std::invalid_argument&) { rejected=true; }
-        check(rejected,"Reject inconsistent speed limits");
-        std::cout << "PASS: startup, recovery, coordinate transforms, distant chase, left/right alignment, single pass, interruptions, stop and reset\n";
+        check(rejected,"Reject invalid skill duration");
+        std::cout << "PASS: startup, recovery, coordinate transforms, direct native kick, planner handoff, single attempt, interruptions, stop and reset\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

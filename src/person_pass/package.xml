@@ -12,5 +12,6 @@
   <depend>booster_interface</depend>
   <depend>booster_msgs</depend>
   <depend>vision_interface</depend>
+  <depend>brain</depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

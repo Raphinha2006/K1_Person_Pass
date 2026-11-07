@@ -2,16 +2,9 @@ person_pass_node:
   ros__parameters:
     dry_run: true  # Preview all requests; no mode, head, get-up or movement RPC is sent.
     auto_start: true
-    vx_limit: 0.4
-    vy_limit: 0.3
-    turn_limit: 0.6
-    min_vx: 0.3
-    min_vy: 0.3
-    min_turn: 0.25
-    stand_off: 0.45
-    alignment: 0.1
-    kick_speed: 0.35
-    kick_duration: 2.0
+    visual_kick_version: 1  # SDK VisualKickVersion::kV2; valid wire values are 0 and 1.
+    kick_power: 1.5  # Firmware requested range; actual travel distance still needs calibration.
+    kick_duration: 7.0  # Maximum native-skill attempt window, not a walking duration.
     confidence_threshold: 50.0
     ball_timeout: 1.0
     person_timeout: 2.5

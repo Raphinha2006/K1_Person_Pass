@@ -4,7 +4,9 @@
 #include <booster_interface/msg/odometer.hpp>
 #include <booster_interface/msg/raw_bytes_msg.hpp>
 #include <booster_msgs/msg/rpc_req_msg.hpp>
+#include <booster_msgs/msg/rpc_resp_msg.hpp>
 #include <vision_interface/msg/detections.hpp>
+#include <brain/msg/kick.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -44,16 +46,34 @@ public:
         recovery_timeout_=positive("recovery_timeout",2.5);
         getup_version_=fixed<int>("getup_version",1);
         if (getup_version_<0 || getup_version_>1) throw std::invalid_argument("getup_version must be 0 or 1");
+        kick_version_=fixed<int>("visual_kick_version",1);
+        if (kick_version_<0 || kick_version_>1) throw std::invalid_argument("visual_kick_version must be 0 or 1");
+        kick_power_=positive("kick_power",1.5);
         odom_scale_=positive("odom_scale",.8);
         command_=create_publisher<booster_msgs::msg::RpcReqMsg>(
             fixed<std::string>("command_topic","/LocoApiTopicReq"),10);
         preview_=create_publisher<std_msgs::msg::String>("/person_pass/preview",10);
+        kick_target_=create_publisher<brain::msg::Kick>(
+            dry_run_ ? "/person_pass/kick_preview" : "/kick_ball",10);
         status_=create_publisher<std_msgs::msg::String>("/person_pass/status",rclcpp::QoS(1).transient_local());
         const auto qos=rclcpp::SensorDataQoS();
+        response_sub_=create_subscription<booster_msgs::msg::RpcRespMsg>(
+            "/LocoApiTopicResp",10,[this](const booster_msgs::msg::RpcRespMsg& m) {
+                if (m.uuid!=kick_start_uuid_ && m.uuid!=kick_stop_uuid_) return;
+                const auto h=Json::parse(m.header,nullptr,false);
+                if (h.is_discarded() || !h.is_object()) return;
+                const auto status=h.value("status",-1);
+                const bool start=m.uuid==kick_start_uuid_;
+                RCLCPP_INFO(get_logger(),"VISUAL_KICK_RESPONSE start=%s status=%d",
+                            start ? "true" : "false",status);
+                if (start && status!=0) { controller_.enable(false); halt(); }
+            });
         recovery_sub_=create_subscription<booster_interface::msg::RawBytesMsg>(
             fixed<std::string>("recovery_topic","/fall_down_recovery_state"),qos,
             [this](const booster_interface::msg::RawBytesMsg& m) {
                 if (m.msg.size()<3 || m.msg[0]>3 || m.msg[1]>1) return;
+                if (visual_kick_active_ && planner_!=m.msg[2])
+                    RCLCPP_INFO(get_logger(),"VISUAL_KICK_FEEDBACK planner=%u recovery=%u",m.msg[2],m.msg[0]);
                 recovery_=m.msg[0]; available_=m.msg[1]!=0; planner_=m.msg[2]; robot_time_=monotonic();
             });
         odom_sub_=create_subscription<booster_interface::msg::Odometer>(
@@ -85,7 +105,10 @@ public:
         RCLCPP_INFO(get_logger(),"Independent person pass; dry_run=%s; no referee or field localization",
                     dry_run_ ? "true" : "false");
     }
-    void halt() { request(booster_interface::CreateMoveMsg(0,0,0)); }
+    void halt() {
+        if (visual_kick_active_) visualKick(false);
+        request(booster_interface::CreateMoveMsg(0,0,0));
+    }
 private:
     template<class T> T fixed(const std::string& key,T value) {
         rcl_interfaces::msg::ParameterDescriptor descriptor;
@@ -99,12 +122,7 @@ private:
     }
     pp::Config loadConfig() {
         pp::Config c;
-        c.vx_limit=positive("vx_limit",c.vx_limit); c.vy_limit=positive("vy_limit",c.vy_limit);
-        c.turn_limit=positive("turn_limit",c.turn_limit);
-        c.min_vx=positive("min_vx",c.min_vx); c.min_vy=positive("min_vy",c.min_vy);
-        c.min_turn=positive("min_turn",c.min_turn);
-        c.stand_off=positive("stand_off",c.stand_off); c.alignment=positive("alignment",c.alignment);
-        c.kick_speed=positive("kick_speed",c.kick_speed); c.kick_duration=positive("kick_duration",c.kick_duration);
+        c.kick_duration=positive("kick_duration",c.kick_duration);
         c.robot_timeout=positive("robot_timeout",c.robot_timeout);
         c.startup_timeout=positive("startup_timeout",c.startup_timeout);
         return c;
@@ -133,7 +151,7 @@ private:
         if (best>=0) ball_={pp::toOdom(ball,pose_),t-age};
         if (nearest>=0) person_={pp::toOdom(person,pose_),t-age};
     }
-    void request(const booster_interface::msg::BoosterApiReqMsg& api) {
+    std::string request(const booster_interface::msg::BoosterApiReqMsg& api) {
         booster_msgs::msg::RpcReqMsg m;
         m.uuid=requestUuid();
         m.header=Json{{"api_id",api.api_id}}.dump(); m.body=api.body;
@@ -141,19 +159,34 @@ private:
             std_msgs::msg::String s;
             s.data=Json{{"header",Json::parse(m.header)},{"body",m.body}}.dump(); preview_->publish(s);
         } else command_->publish(m);
+        return m.uuid;
     }
-    void exitAutoKick() {
-        request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kVisualKick,
-                                               Json{{"start",false},{"version",2}}.dump()));
+    void visualKick(bool start) {
+        const auto id=request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kVisualKick,
+                                               Json{{"start",start},{"version",kick_version_}}.dump()));
+        (start ? kick_start_uuid_ : kick_stop_uuid_)=id;
+        visual_kick_active_=start;
+        RCLCPP_INFO(get_logger(),"VISUAL_KICK_REQUEST start=%s version=%d dry_run=%s",
+                    start ? "true" : "false",kick_version_,dry_run_ ? "true" : "false");
+    }
+    void kickTarget(const pp::Input& i) {
+        brain::msg::Kick m;
+        m.header.stamp=now();
+        m.x=i.ball.x; m.y=i.ball.y;
+        m.dir=std::atan2(i.person.y-i.ball.y,i.person.x-i.ball.x);
+        m.goal_x=i.person.x; m.goal_y=i.person.y;
+        // Local odometry is the reference; field localization is not required.
+        m.robot_theta_to_field=pose_.yaw;
+        m.power=kick_power_;
+        kick_target_->publish(m);
     }
     void head(double t,const pp::Input& i,pp::Stage stage) {
         if (t-head_command_time_<.2 || !fresh(head_time_,t,config_.robot_timeout)) return;
-        if (stage!=pp::Stage::WaitTargets && stage!=pp::Stage::Blocked && stage!=pp::Stage::Chase
-            && stage!=pp::Stage::Adjust && stage!=pp::Stage::Align && stage!=pp::Stage::Kick) return;
+        if (stage!=pp::Stage::WaitTargets && stage!=pp::Stage::Blocked && stage!=pp::Stage::Kick) return;
         double yaw=0, pitch=.35;
         const bool ball=fresh(ball_.stamp,t,ball_timeout_), person=fresh(person_.stamp,t,person_timeout_);
         if (ball && person) {
-            const pp::Point target=(stage==pp::Stage::Kick || static_cast<int>(t/.5)%2==0) ? i.ball : i.person;
+            const pp::Point target=static_cast<int>(t/.5)%2==0 ? i.ball : i.person;
             yaw=std::atan2(target.y,target.x); pitch=std::atan2(.8,pp::length(target));
         } else {
             const int step=static_cast<int>(t/.7)%3;
@@ -176,13 +209,16 @@ private:
             if (p.x>0 && pp::length(p)<.6) i.blocked=true;
         }
         const auto out=controller_.tick(i);
+        if (visual_kick_active_ && out.stage!=pp::Stage::Kick) visualKick(false);
         if (out.send_velocity) request(booster_interface::CreateMoveMsg(out.vx,out.vy,out.turn));
-        if (out.stage==pp::Stage::Settle && last_stage_!=pp::Stage::Settle) exitAutoKick();
+        if (out.stage==pp::Stage::Settle && last_stage_!=pp::Stage::Settle) visualKick(false);
+        if (out.stage==pp::Stage::Kick) kickTarget(i);
+        if (out.action==pp::Action::StartKick) visualKick(true);
         if (out.action==pp::Action::Prepare)
             request(booster_interface::CreateChangeModeMsg(booster::robot::RobotMode::kPrepare));
         if (out.action==pp::Action::Soccer) {
             request(booster_interface::CreateChangeModeMsg(booster::robot::RobotMode::kSoccer));
-            exitAutoKick();
+            visualKick(false);
         }
         if (out.action==pp::Action::GetUp)
             request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kGetUp,
@@ -204,8 +240,10 @@ private:
     }
     pp::Config config_;
     pp::Controller controller_;
-    bool dry_run_=true, available_=false;
-    int recovery_=0, planner_=0, getup_version_=1;
+    bool dry_run_=true, available_=false, visual_kick_active_=false;
+    int recovery_=0, planner_=0, getup_version_=1, kick_version_=1;
+    double kick_power_=1.5;
+    std::string kick_start_uuid_,kick_stop_uuid_;
     double confidence_=50, ball_timeout_=1, person_timeout_=2.5, frame_timeout_=.5, odom_scale_=.8;
     double recovery_timeout_=2.5;
     double robot_time_=-1, odom_time_=-1, head_time_=-1, obstacle_time_=-1;
@@ -215,8 +253,10 @@ private:
     std::vector<pp::Point> obstacles_;
     pp::Stage last_stage_=pp::Stage::Fault;
     rclcpp::Publisher<booster_msgs::msg::RpcReqMsg>::SharedPtr command_;
+    rclcpp::Publisher<brain::msg::Kick>::SharedPtr kick_target_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr preview_,status_;
     rclcpp::Subscription<booster_interface::msg::RawBytesMsg>::SharedPtr recovery_sub_;
+    rclcpp::Subscription<booster_msgs::msg::RpcRespMsg>::SharedPtr response_sub_;
     rclcpp::Subscription<booster_interface::msg::Odometer>::SharedPtr odom_sub_;
     rclcpp::Subscription<booster_interface::msg::LowState>::SharedPtr head_sub_;
     rclcpp::Subscription<vision_interface::msg::Detections>::SharedPtr vision_sub_;
