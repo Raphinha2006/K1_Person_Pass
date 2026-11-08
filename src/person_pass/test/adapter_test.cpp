@@ -236,9 +236,11 @@ static void run(const std::string& binary,bool preview_only) {
         check(rclcpp::spin_until_future_complete(node,searching,std::chrono::seconds(2))
               ==rclcpp::FutureReturnCode::SUCCESS,"Enable lost-person search");
         const int starts_before_search=auto_kick_starts;
-        sample(0,ready_planner,10,true,true,false,false);
+        sample(0,ready_planner,2,true,true,false,false);
+        sample(0,ready_planner,3,false); // Ball memory expires during receiver scan.
+        sample(0,ready_planner,5,true,true,false,false);
         check(stage=="WAIT_TARGETS" && last_vx==0 && last_vy==0 && std::abs(last_turn-.6)<1e-5,
-              "After receiver timeout and full head sweep, turn toward last receiver bearing");
+              "Receiver search survives ball memory expiry and turns after full head sweep");
         check(auto_kick_starts==starts_before_search && soccer==modes_before_search,
               "Search must not start kick or request a mode change");
         sample(0,ready_planner,2.8,true,false,false,false);

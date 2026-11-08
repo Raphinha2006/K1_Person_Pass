@@ -28,13 +28,13 @@ int main() {
         const Point left{2,1}, right{2,-1};
         const double pitch[]={1,1,1,.2,.2,.2}, yaw[]={1.1,0,-1.1,-1.1,0,1.1};
         for (int k=0;k<6;++k) {
-            auto s=search.tick(k,true,false,false,left,right,true,.6);
+            auto s=search.tick(k,true,false,true,left,right,true,.6);
             check(s.target==SearchTarget::Ball && s.head && s.pitch==pitch[k]
-                  && s.yaw==yaw[k] && s.turn==0,"AAA six poses; ball has priority; no turn in first sweep");
-            s=search.tick(k+.99,true,false,false,left,right,true,.6);
+                  && s.yaw==yaw[k] && s.turn==0,"AAA six poses; search ball with known receiver; no turn in first sweep");
+            s=search.tick(k+.99,true,false,true,left,right,true,.6);
             check(s.yaw==yaw[k] && s.turn==0,"Each scan pose lasts a full second");
         }
-        auto s=search.tick(6,true,false,false,left,right,true,.6);
+        auto s=search.tick(6,true,false,true,left,right,true,.6);
         check(s.turn==.6 && s.yaw==1.1,"After six seconds turn left and keep scanning");
         s=search.tick(6.1,true,true,false,left,right,true,.6);
         check(s.target==SearchTarget::Person && s.stop && s.turn==0,"Finding ball stops turn and starts person scan");
@@ -64,7 +64,25 @@ int main() {
         s=search.tick(2,true,false,false,left,right,true,.6,true,true,true);
         check(s.target==SearchTarget::Person && s.yaw==0,"Brief ball freshness loss must not restart receiver scan");
         s=search.tick(3,true,false,false,left,right,true,.6,false,true,true);
-        check(s.target==SearchTarget::Ball,"Ball memory expiry restores ball priority");
+        check(s.target==SearchTarget::Person,"Ball memory expiry must not interrupt receiver search");
+        for (int k=4;k<=8;++k) {
+            s=search.tick(k,true,k%2==0,false,left,right,true,.6,false,false,true);
+            check(s.target==SearchTarget::Person,"Alternating ball sightings cannot change receiver search");
+        }
+        check(s.turn==-.6,"Receiver search turns after six seconds despite ball loss");
+        s=search.tick(8.1,true,false,true,left,right,true,.6,false,true);
+        check(s.target==SearchTarget::Ball && s.stop && s.turn==0,"Receiver reacquisition stops turn before finding ball");
+        s=search.tick(14.2,true,false,false,left,right,true,.6,false,false);
+        check(s.target==SearchTarget::Ball && s.turn==.6,"Receiver expiry cannot interrupt an ongoing ball search");
+        s=search.tick(14.3,true,true,false,left,right,true,.6,true,false);
+        check(s.target==SearchTarget::Person && s.stop && s.turn==0,"Finding ball re-evaluates expired receiver memory");
+        search.reset();
+        s=search.tick(0,true,false,false,left,right,true,.6);
+        check(s.target==SearchTarget::Person,"Both missing and no receiver memory: find person first");
+        s=search.tick(6,true,false,false,left,right,true,.6);
+        check(s.turn==-.6,"Both missing must still reach body turn");
+        s=search.tick(6.1,false,false,false,left,right,true,.6);
+        check(s.stop && !s.head && s.turn==0,"Cancellation stops a latched receiver search");
         search.reset();
         s=search.tick(40,false,false,false,left,right,true,.6);
         check(!s.head && s.turn==0,"Native kick never runs search even with missing targets");
