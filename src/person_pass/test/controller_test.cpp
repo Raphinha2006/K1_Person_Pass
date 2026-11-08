@@ -1,4 +1,5 @@
 #include "person_pass/controller.hpp"
+#include "person_pass/search.hpp"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -23,6 +24,40 @@ static Output startKick(Controller& c,Input& i) {
 }
 int main() {
     try {
+        TargetSearch search;
+        const Point left{2,1}, right{2,-1};
+        const double pitch[]={1,1,1,.2,.2,.2}, yaw[]={1.1,0,-1.1,-1.1,0,1.1};
+        for (int k=0;k<6;++k) {
+            auto s=search.tick(k,true,false,false,left,right,true,.6);
+            check(s.target==SearchTarget::Ball && s.head && s.pitch==pitch[k]
+                  && s.yaw==yaw[k] && s.turn==0,"AAA six poses; ball has priority; no turn in first sweep");
+            s=search.tick(k+.99,true,false,false,left,right,true,.6);
+            check(s.yaw==yaw[k] && s.turn==0,"Each scan pose lasts a full second");
+        }
+        auto s=search.tick(6,true,false,false,left,right,true,.6);
+        check(s.turn==.6 && s.yaw==1.1,"After six seconds turn left and keep scanning");
+        s=search.tick(6.1,true,true,false,left,right,true,.6);
+        check(s.target==SearchTarget::Person && s.stop && s.turn==0,"Finding ball stops turn and starts person scan");
+        s=search.tick(12.2,true,true,false,left,right,true,.6);
+        check(s.turn==-.6,"Person search follows its own last bearing");
+        s=search.tick(12.3,true,true,true,left,right,true,.6);
+        check(s.stop && !s.head && s.turn==0,"Finding both targets immediately stops search");
+        search.tick(20,true,false,true,left,right,false,.6);
+        s=search.tick(26,true,false,true,left,right,false,.6);
+        check(s.head && s.turn==0,"Cooldown allows head scan but no body turn");
+        s=search.tick(26.1,true,false,true,left,right,true,.6);
+        check(s.turn==.6,"Turn allowed after cooldown if full scan has elapsed");
+        s=search.tick(26.2,true,false,true,left,right,false,.6);
+        check(s.stop && s.head && s.turn==0,"Obstruction stops turn while head keeps scanning");
+        s=search.tick(26.3,true,false,true,left,right,true,.4);
+        check(s.turn==.4,"Resume after obstruction within configured speed cap");
+        s=search.tick(26.4,false,false,true,left,right,true,.6);
+        check(s.stop && !s.head && s.turn==0,"Disable, stale feedback or recovery cancels search");
+        s=search.tick(30,true,false,true,left,right,true,.6);
+        check(s.turn==0 && s.yaw==1.1,"Resume with a new full scan after cancellation");
+        search.reset();
+        s=search.tick(40,false,false,false,left,right,true,.6);
+        check(!s.head && s.turn==0,"Native kick never runs search even with missing targets");
         const Pose pose{3,-2,1.5707963267948966};
         const Point p{2,-1}; const Point q=toRobot(toOdom(p,pose),pose);
         check(std::hypot(p.x-q.x,p.y-q.y)<1e-10,"Odometry coordinate round trip");
@@ -103,8 +138,10 @@ int main() {
         }
         active.now=8.0;
         check(pass.tick(active).stage==Stage::WaitTargets,"Kick must end and enter cooldown");
+        check(pass.coolingDown(active.now),"Expose cooldown to inhibit search turns");
         check(pass.tick(active).stage==Stage::WaitTargets,"Cooldown must not restart immediately");
         active.now=10.1;
+        check(!pass.coolingDown(active.now),"Search turn may resume after cooldown");
         check(pass.tick(active).stage==Stage::Align,"After cooldown the loop retries the pass");
         active.now=10.31;
         check(pass.tick(active).action==Action::StartKick,"Loop starts a second native kick");

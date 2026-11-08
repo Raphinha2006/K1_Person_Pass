@@ -1,4 +1,5 @@
 #include "person_pass/controller.hpp"
+#include "person_pass/search.hpp"
 #include <booster_interface/message_utils.hpp>
 #include <booster_interface/msg/low_state.hpp>
 #include <booster_interface/msg/odometer.hpp>
@@ -125,6 +126,7 @@ public:
             [this](std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                    std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
                 controller_.enable(request->data);
+                search_.reset();
                 if (!request->data) halt();
                 response->success=true;
                 response->message=request->data ? "Enabled; one attempt per false->true transition" : "Stopped";
@@ -233,8 +235,13 @@ private:
         m.power=kick_power_;
         kick_target_->publish(m);
     }
-    void head(double t,const pp::Input& i,pp::Stage stage) {
+    void head(double t,const pp::Input& i,pp::Stage stage,const pp::SearchOutput& search) {
         if (t-head_command_time_<.2 || !fresh(head_time_,t,config_.robot_timeout)) return;
+        if (search.head) {
+            request(booster_interface::CreateRotateHeadMsg(search.pitch,search.yaw));
+            head_command_time_=t;
+            return;
+        }
         if (stage!=pp::Stage::WaitTargets && stage!=pp::Stage::Blocked
             && stage!=pp::Stage::Chase && stage!=pp::Stage::Adjust
             && stage!=pp::Stage::Align && stage!=pp::Stage::Kick) return;
@@ -273,7 +280,20 @@ private:
             mode_uuid_=request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kGetMode,"{}"));
             mode_query_time_=t;
         }
-        const auto out=controller_.tick(i);
+        auto out=controller_.tick(i);
+        const bool search_allowed=(out.stage==pp::Stage::WaitTargets || out.stage==pp::Stage::Blocked)
+            && i.robot_fresh && i.recovery==0 && i.soccer_ready
+            && fresh(odom_time_,t,config_.robot_timeout) && fresh(head_time_,t,config_.robot_timeout);
+        const auto search=search_.tick(t,search_allowed,
+            fresh(ball_.stamp,t,ball_timeout_),fresh(person_.stamp,t,person_timeout_),
+            ball_.stamp>=0 ? i.ball : pp::Point{},person_.stamp>=0 ? i.person : pp::Point{},
+            !i.blocked && !controller_.coolingDown(t),config_.turn_limit);
+        // Stop on reacquisition before allowing approach on the following tick.
+        // Kick never receives search Move commands; its native skill owns motion.
+        if (search.head || (search.stop && out.stage!=pp::Stage::Kick)) {
+            out.send_velocity=true; out.vx=out.vy=0;
+            out.turn=search.stop ? 0 : search.turn;
+        }
         if (visual_kick_active_ && out.stage!=pp::Stage::Kick) visualKick(false);
         if (out.send_velocity) request(booster_interface::CreateMoveMsg(out.vx,out.vy,out.turn));
         if (out.stage==pp::Stage::Settle && last_stage_!=pp::Stage::Settle) visualKick(false);
@@ -312,7 +332,7 @@ private:
         if (out.action==pp::Action::GetUp)
             request(booster_interface::ConstructMsg(booster::robot::b1::LocoApiId::kGetUp,
                                                    Json{{"version",getup_version_}}.dump()));
-        head(t,i,out.stage);
+        head(t,i,out.stage,search);
         if (out.stage!=last_stage_ || t-status_time_>=1) {
             std_msgs::msg::String msg;
             msg.data=Json{{"state",pp::name(out.stage)},{"dry_run",dry_run_},
@@ -322,6 +342,9 @@ private:
                 {"head_fresh",fresh(head_time_,t,config_.robot_timeout)},
                 {"ball_fresh",fresh(ball_.stamp,t,ball_timeout_)},
                 {"person_fresh",fresh(person_.stamp,t,person_timeout_)},
+                {"search_target",search.target==pp::SearchTarget::Ball ? "ball"
+                    : (search.target==pp::SearchTarget::Person ? "person" : "none")},
+                {"search_turn",search.head ? out.turn : 0.0},
                 {"ball_x",i.ball.x},{"ball_y",i.ball.y},
                 {"person_x",i.person.x},{"person_y",i.person.y},
                 {"kick_power",kick_power_}}.dump();
@@ -332,6 +355,7 @@ private:
     }
     pp::Config config_;
     pp::Controller controller_;
+    pp::TargetSearch search_;
     bool dry_run_=true, available_=false, visual_kick_active_=false, soccer_ready_=false;
     bool mode_known_=false;
     int mode_value_=-1;

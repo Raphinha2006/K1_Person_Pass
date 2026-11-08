@@ -77,6 +77,7 @@ public:
         }
         enabled_=value;
     }
+    bool coolingDown(double now) const { return now<cooldown_until_; }
     Output tick(const Input& i) {
         if (!enabled_) return emit({Stage::Disabled});
         if (fault_) return emit({Stage::Fault});
