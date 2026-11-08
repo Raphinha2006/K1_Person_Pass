@@ -132,7 +132,7 @@ public:
         // A pass needs both the ball and a receiver; the old demo's decision,
         // distance and angle gates stay bypassed, but the receiver is required.
         const bool valid=i.scene_valid && finite(i.ball) && finite(i.person)
-            && length(i.ball)>.05;
+            && length(i.ball)>.05 && length({i.person.x-i.ball.x,i.person.y-i.ball.y})>=.5;
         if (kicking_) {
             // The native skill looks after the ball itself. The head camera loses
             // the ball while the robot steps over it, so a short target loss must

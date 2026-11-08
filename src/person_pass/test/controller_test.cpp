@@ -101,13 +101,21 @@ int main() {
         search.reset(); // Node does this after valid CHASE/ADJUST or cancellation.
         s=search.tick(10,true,false,false,left,right,true,.6);
         check(s.turn==0 && s.yaw==1.1,"Valid approach resets the next search to one full scan");
-        for (double receiver_distance : {.9,.4}) {
+        for (double receiver_distance : {.5,.9}) {
             Controller near; near.enable(true); Input n=scene();
             n.person={n.ball.x+receiver_distance,0};
             near.tick(n); n.now=.6;
             check(near.tick(n).stage==Stage::Align,"Sub-metre receiver distance must allow alignment");
             n.now=.81;
             check(near.tick(n).action==Action::StartKick,"Sub-metre receiver distance must allow native kick");
+        }
+        for (double receiver_distance : {0.0,.22,.49}) {
+            Controller near; near.enable(true); Input n=scene();
+            n.person={n.ball.x+receiver_distance,0};
+            near.tick(n); n.now=.6;
+            check(near.tick(n).stage==Stage::WaitTargets,"Receiver below 0.5m must wait");
+            n.now=.81; const auto out=near.tick(n);
+            check(stopped(out) && out.action!=Action::StartKick,"Receiver below 0.5m must not start native kick");
         }
         const Pose pose{3,-2,1.5707963267948966};
         const Point p{2,-1}; const Point q=toRobot(toOdom(p,pose),pose);
@@ -229,7 +237,7 @@ int main() {
         i.scene_valid=true; i.blocked=true;
         check(waiting.tick(i).stage==Stage::Blocked,"Nearby obstacles must prevent a start");
         i.blocked=false; i.person={.5,-.2};
-        check(waiting.tick(i).stage==Stage::Adjust,"Nearby receiver still uses existing alignment correction");
+        check(waiting.tick(i).stage==Stage::WaitTargets,"Receiver below 0.5m must not start a pass");
         i.person={2.5,0}; i.ball={.5,0};
         check(waiting.tick(i).stage==Stage::Align,"Valid ball and receiver line up for a pass");
         bool rejected=false; try { Config c; c.kick_duration=0; Controller invalid(c); }
