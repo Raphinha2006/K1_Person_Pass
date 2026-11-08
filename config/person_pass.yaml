@@ -14,6 +14,8 @@ person_pass_node:
     confidence_threshold: 50.0
     ball_timeout: 1.0
     person_timeout: 2.5
+    ball_memory_timeout: 2.0
+    person_memory_timeout: 4.0
     person_max_range: 10.0  # Ignore far false positives; the pass target must be plausible.
     frame_timeout: 0.5
     robot_timeout: 0.8

@@ -229,7 +229,7 @@ static void run(const std::string& binary,bool preview_only) {
         check(stage=="DISABLED" && last_vx==0,"Firmware refusal must disable and exit the skill");
         // Let the previously valid receiver expire while disabled. Otherwise
         // re-enabling legitimately starts a kick using the 2.5-second cache.
-        sample(0,ready_planner,2.7,true,true,false,false);
+        sample(0,ready_planner,4.2,true,true,false,false);
         const int modes_before_search=soccer;
         auto search_enable=std::make_shared<std_srvs::srv::SetBool::Request>(); search_enable->data=true;
         auto searching=enable->async_send_request(search_enable);

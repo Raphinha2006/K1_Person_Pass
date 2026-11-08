@@ -44,6 +44,10 @@ public:
         if (confidence_>100) throw std::invalid_argument("Confidence must be in [0,100]");
         ball_timeout_=positive("ball_timeout",1.0);
         person_timeout_=positive("person_timeout",2.5);
+        ball_memory_timeout_=positive("ball_memory_timeout",2.0);
+        person_memory_timeout_=positive("person_memory_timeout",4.0);
+        if (ball_memory_timeout_<ball_timeout_ || person_memory_timeout_<person_timeout_)
+            throw std::invalid_argument("Memory periods must cover observation freshness periods");
         person_range_=positive("person_max_range",10.0);
         frame_timeout_=positive("frame_timeout",.5);
         recovery_timeout_=positive("recovery_timeout",2.5);
@@ -190,9 +194,7 @@ private:
             if (person_.stamp>=0 && stamp-person_.stamp<=.5) {
                 const double jump=pp::length({odom.x-person_.odom.x,odom.y-person_.odom.y});
                 if (jump>1.5 && ++person_rejects_<3) {
-                    // Single-frame teleport is a false positive; keep the old
-                    // position but refresh the stamp so it does not expire.
-                    person_.stamp=stamp;
+                    // Rejected detections must not renew observation or memory.
                 } else {
                     const double a=.3;
                     odom.x=person_.odom.x+a*(odom.x-person_.odom.x);
@@ -270,8 +272,12 @@ private:
         i.recovery=recovery_; i.recovery_available=available_; i.planner=planner_;
         i.soccer_ready=soccer_ready_;
         i.ball=pp::toRobot(ball_.odom,pose_); i.person=pp::toRobot(person_.odom,pose_);
+        i.ball_fresh=fresh(ball_.stamp,t,ball_timeout_);
+        i.person_fresh=fresh(person_.stamp,t,person_timeout_);
+        const bool ball_memory=fresh(ball_.stamp,t,ball_memory_timeout_);
+        const bool person_memory=fresh(person_.stamp,t,person_memory_timeout_);
         i.scene_valid=fresh(odom_time_,t,config_.robot_timeout) && fresh(head_time_,t,config_.robot_timeout)
-            && fresh(ball_.stamp,t,ball_timeout_) && fresh(person_.stamp,t,person_timeout_);
+            && ball_memory && person_memory;
         if (fresh(obstacle_time_,t,frame_timeout_)) for (auto p : obstacles_) {
             p=pp::toRobot(p,pose_);
             if (p.x>0 && pp::length(p)<.6) i.blocked=true;
@@ -281,13 +287,15 @@ private:
             mode_query_time_=t;
         }
         auto out=controller_.tick(i);
-        const bool search_allowed=(out.stage==pp::Stage::WaitTargets || out.stage==pp::Stage::Blocked)
+        const bool search_allowed=(out.stage==pp::Stage::WaitTargets || out.stage==pp::Stage::Blocked
+            || out.stage==pp::Stage::Chase || out.stage==pp::Stage::Adjust)
             && i.robot_fresh && i.recovery==0 && i.soccer_ready
             && fresh(odom_time_,t,config_.robot_timeout) && fresh(head_time_,t,config_.robot_timeout);
         const auto search=search_.tick(t,search_allowed,
-            fresh(ball_.stamp,t,ball_timeout_),fresh(person_.stamp,t,person_timeout_),
+            i.ball_fresh,i.person_fresh,
             ball_.stamp>=0 ? i.ball : pp::Point{},person_.stamp>=0 ? i.person : pp::Point{},
-            !i.blocked && !controller_.coolingDown(t),config_.turn_limit);
+            !i.blocked && !controller_.coolingDown(t),config_.turn_limit,
+            ball_memory,person_memory,out.stage==pp::Stage::WaitTargets && !controller_.coolingDown(t));
         // Stop on reacquisition before allowing approach on the following tick.
         // Kick never receives search Move commands; its native skill owns motion.
         if (search.head || (search.stop && out.stage!=pp::Stage::Kick)) {
@@ -345,6 +353,12 @@ private:
                 {"search_target",search.target==pp::SearchTarget::Ball ? "ball"
                     : (search.target==pp::SearchTarget::Person ? "person" : "none")},
                 {"search_turn",search.head ? out.turn : 0.0},
+                {"ball_age",ball_.stamp>=0 ? t-ball_.stamp : -1.0},
+                {"person_age",person_.stamp>=0 ? t-person_.stamp : -1.0},
+                {"ball_memory",ball_memory},{"person_memory",person_memory},
+                {"search_reason",search.target==pp::SearchTarget::Ball ? "ball_not_fresh"
+                    : (search.target==pp::SearchTarget::Person
+                        ? (person_memory ? "refresh_before_kick" : "person_memory_expired") : "none")},
                 {"ball_x",i.ball.x},{"ball_y",i.ball.y},
                 {"person_x",i.person.x},{"person_y",i.person.y},
                 {"kick_power",kick_power_}}.dump();
@@ -369,6 +383,7 @@ private:
     std::string kick_start_uuid_,kick_stop_uuid_,soccer_uuid_,mode_uuid_;
     double confidence_=50, ball_timeout_=1, person_timeout_=2.5, person_range_=10.0;
     double frame_timeout_=.5, odom_scale_=.8;
+    double ball_memory_timeout_=2, person_memory_timeout_=4;
     double recovery_timeout_=2.5;
     double robot_time_=-1, odom_time_=-1, head_time_=-1, obstacle_time_=-1;
     double head_command_time_=-1, status_time_=-1, mode_query_time_=-1;

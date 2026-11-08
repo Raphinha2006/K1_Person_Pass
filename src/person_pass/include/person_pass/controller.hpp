@@ -47,6 +47,7 @@ struct Input {
     bool robot_fresh = false, recovery_available = false, soccer_ready = false;
     int recovery = 0, planner = 0;
     bool scene_valid = false, blocked = false;
+    bool ball_fresh = true, person_fresh = true;
     Point ball, person;
 };
 struct Output {
@@ -158,6 +159,10 @@ public:
         // than that leaves no room for the kick, starting farther loses the ball.
         if (range>=.3 && range<=3.5 && i.ball.x>.15
             && (std::abs(error)<.6 || range>=1.2)) {
+            if (!i.ball_fresh || !i.person_fresh) {
+                align_since_=-1;
+                return emit({Stage::WaitTargets});
+            }
             if (align_since_<0) align_since_=i.now;
             if (i.now-align_since_>=.2) {
                 kicking_=true; kick_since_=i.now;

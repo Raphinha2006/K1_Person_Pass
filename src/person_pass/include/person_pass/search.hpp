@@ -14,9 +14,14 @@ struct SearchOutput {
 class TargetSearch {
 public:
     SearchOutput tick(double now,bool allowed,bool ball_fresh,bool person_fresh,
-                      Point last_ball,Point last_person,bool can_turn,double turn_limit) {
-        const auto target=!ball_fresh ? SearchTarget::Ball
-            : (!person_fresh ? SearchTarget::Person : SearchTarget::None);
+                      Point last_ball,Point last_person,bool can_turn,double turn_limit,
+                      bool ball_remembered=false,bool person_remembered=false,bool refresh=false) {
+        auto target=!ball_fresh ? SearchTarget::Ball
+            : (!person_fresh && (!person_remembered || refresh) ? SearchTarget::Person : SearchTarget::None);
+        // Finish reacquiring the selected receiver while the ball is still in
+        // memory; do not restart the sweep just because its fresh period ended.
+        if (target_==SearchTarget::Person && !person_fresh && ball_remembered)
+            target=SearchTarget::Person;
         if (!allowed || target==SearchTarget::None) {
             const bool stop=turning_;
             reset();
