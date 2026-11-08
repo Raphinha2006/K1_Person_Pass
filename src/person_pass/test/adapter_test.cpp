@@ -227,6 +227,22 @@ static void run(const std::string& binary,bool preview_only) {
         responses->publish(rejected);
         sample(0,ready_planner,.3);
         check(stage=="DISABLED" && last_vx==0,"Firmware refusal must disable and exit the skill");
+        const int modes_before_search=soccer;
+        auto search_enable=std::make_shared<std_srvs::srv::SetBool::Request>(); search_enable->data=true;
+        auto searching=enable->async_send_request(search_enable);
+        check(rclcpp::spin_until_future_complete(node,searching,std::chrono::seconds(2))
+              ==rclcpp::FutureReturnCode::SUCCESS,"Enable lost-person search");
+        const int starts_before_search=auto_kick_starts;
+        sample(0,ready_planner,10,true,true,false,false);
+        check(stage=="WAIT_TARGETS" && last_vx==0 && last_vy==0 && std::abs(last_turn-.6)<1e-5,
+              "After receiver timeout and full head sweep, turn toward last receiver bearing");
+        check(auto_kick_starts==starts_before_search && soccer==modes_before_search,
+              "Search must not start kick or request a mode change");
+        sample(0,ready_planner,2.8,true,false,false,false);
+        check(stage=="WAIT_ROBOT" && last_turn==0,"Stale feedback stops a running search turn");
+        sample(0,ready_planner,1.2);
+        check(stage=="KICK" && auto_kick_starts==starts_before_search+1 && last_turn==0,
+              "Receiver reacquisition stops search and resumes native kick");
         check(preview_only ? hardware_messages==0 : hardware_messages>0,"Dry-run interception / remapped output");
         check(preview_only ? hardware_targets==0 : hardware_targets>0,"Dry-run never feeds targets to the hardware skill");
         stopChild(child); child=-1;
