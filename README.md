@@ -1,113 +1,76 @@
-# K1 独立视觉向人传球
+# K1 视觉向人传球
 
-本项目从真机修改前基线 `ade91251cd3156691040db39c17f1667c709f6e6` 提取依赖。
-原目录 `Booster_K1_3v3_Demo` 和原版副本 `AAA` 保持不变。
-已在 K1 上进行基础交互测试，用户现场确认具备找人和踢球能力；落点、距离和稳定性留待后续优化。
+在 Booster K1 上，通过相机找球和接球人，追球、调整位置并调用原生踢球技能向人传球。不需要裁判机、队友通信或球场定位。
 
-当前功能分支改为直接调用原生视觉踢球技能。2026-11-07 已在真机确认：切入足球模式返回 0，原生 `VisualKick` 请求返回 0（此前为 400），现场看到明显踢腿动作；落点、距离和稳定性仍待标定。
+## 当前功能
 
-快速启动见 [简短运行说明](RUN.md)，后续控制调整思路见 [日志分析笔记](docs/PASS_CONTROL_NOTES.md)。
+- 自动处理准备、起身和就绪检查；启动过程会请求足球模式。
+- 选择视野内最近的人作为接球人，通过本机里程计补偿缓存位置。
+- 丢失目标后六点转头扫描，一轮约6秒；仍未找到则原地转身并继续扫描。一次固定找一个目标，短暂重见目标不会无条件重置扫描进度。
+- 人的位置记忆4秒、球2秒；人记忆有效时可用于追球和绕球。出球前要求球在1秒内、人在2.5秒内有有效观测。
+- 球到人距离至少 **0.5米**，满足现有接近及朝向条件后启动原生踢球。动作最长7秒，冷却2秒后继续下一轮。
+- 停用、反馈过期或倒地时停止动作；搜索和接近期间遇到近距离遮挡停车。原生踢球期间不发送行走指令争抢控制，短暂丢失目标不会中断本次动作。
 
-运行环境为 Booster K1、ROS 2 Humble 及机器人现有 SDK。相机标定和 TensorRT 模型沿用本机配置。
+## 复用了哪些原始 demo 接口
 
-## 保留的内容
+依赖提取自真机原始基线 `ade9125`（AAA）；本项目独立运行，不加载 AAA 的完整 Brain 或比赛行为树。
 
-- 原 Vision、K1 相机标定及当前配置使用的两个 TensorRT 模型，未修改视觉算法。
-  修复原 Vision 关闭录制时访问空日志对象的启动崩溃。
-- `booster_interface`、`booster_msgs`、`vision_interface` 三个原有接口包。
-- `src/interface/brain` 仅保留基线原样的 `brain/msg/Kick` 消息定义，匹配固件 `/kick_ball`；不包含 Brain 节点。
-- 一个新增 C++ 控制包 `src/person_pass`。
+| 来源 / 接口 | 用途 |
+| --- | --- |
+| 原 Vision、`vision_interface`，`/booster_soccer/detection` | 获取球和人的类别、置信度及机器人坐标；沿用相机标定和模型 |
+| `booster_interface`、`booster_msgs`，`/LocoApiTopicReq`、`/LocoApiTopicResp` | 使用原 SDK 请求转头、移动、起身、模式查询/切换和 `VisualKick` |
+| `/fall_down_recovery_state`、`/low_state`、`/odometer_state` | 获取恢复状态、头部反馈和本机里程计 |
+| 原样 `brain/msg/Kick`，`/kick_ball` | 向固件提供球坐标、接球目标、方向和力度 |
+| AAA 的头部扫描动作序列和找球思路 | 移植六点扫描、按最后目标方向转身的逻辑，不加载比赛定位流程 |
 
-没有 Brain、裁判机接收程序、比赛行为树、队友通信或球场全局定位。
-Vision 输出的 `position_projection` 已在机器人坐标系中；置信度单位沿用原接口的 0–100。
-短期缓存的人球位置通过本机里程计转换，避免机器人转动后继续使用旧方向。
-保留里程计不代表需要足球场定位；本程序不订阅球场标记或比赛状态。
+原 Vision 另修复了关闭录制时访问空日志对象的启动崩溃。这里的 `brain` 包仅提供 Kick 消息，不运行原 Brain 节点。
 
-## 控制流程
+## 自己设计的部分
 
-等待机器人状态 → 准备模式/起身 → 行走或足球模式反馈 → 站稳 0.5 秒
-→ 看到有效球 → 直接请求原生 `VisualKick(start=true, version=1)`
-→ 持续提供球和目标位置 → 本轮结束或中断时退出技能并停车。
+新增 C++ `person_pass` 控制节点，负责独立状态机、最近接球人选择、人位置滤波与跳变过滤、人球记忆、分步搜索、追球绕球及原生技能接管。
 
-- 起身使用原 `kGetUp` 接口，配置 `getup_version=1` 选择已在本机验证的 BMM 起身；
-  `0` 为基础起身实现。版本字段依据[官方接口](https://docs.booster.tech/zh-CN/docs/developer-guide/cpp/rpc/motion/)。
-  不会在正在起身或正在跌倒时切换模式。
-- 起身重试仅在原版的 `planner=1` 且报告倒地时发出；`planner=10/23` 表示两种原生起身过程，
-  即使恢复状态暂时仍为倒地，也不会再次发起或切换模式。
-- 恢复状态沿用原三字节反馈，站稳要求 `recovery=0`、`planner=8` 或 `20`，与原版一致。
-  `planner` 是原版使用的固件状态索引，不能与 SDK 的 `RobotMode` 数值混用。
-- 未站稳时不发非零速度；模式转换最多等待 30 秒，起身最多请求两次。
-- 真机恢复状态实测约 1 Hz，使用独立的 `recovery_timeout=2.5` 秒；头部和里程计使用 0.8 秒超时。
-- 先请求足球模式并等待成功回复，不能仅凭 planner=20 就把行走模式当成足球模式。
-  本轮启动一次原生技能，运行中不再发送行走速度与它争抢控制。
-- 绕过原 demo 的比赛状态、角色、球场位置、距离、角度和连续对准门槛。
-  固件内部的平衡、接近球和出脚条件仍由原生技能处理，并不保证请求后立即抬脚。
-- 版本线值为 `0=V1`、`1=V2`；已修正先前误用的 `2`。足球模式下固件会立即上报
-  planner=12（此时尚未出脚），因此 `12/22` 也按就绪处理，避免误切回准备模式。
-- 只要球和机器人状态有效就触发技能，不以识别人为前提。头部优先跟踪球。
-- 若有新鲜且距球至少 1 米的接球人，目标仍取最近一人；否则默认沿机器人前方踢球。
-- 球过期、状态丢失、近距离人/对手机器人遮挡时停车。
-  视野暂时没有目标时只转头搜索，不盲目走动。
-- `/kick_ball` 的球坐标来自视觉，`dir` 为球指向目标的角度，`goal_x/y` 为目标的机器人坐标。
-  不使用原 demo 的球门位置；`robot_theta_to_field` 以本地里程计方向为参考。
-- 踢球力度使用正比控制器：`power = offset + gain * 球到接球人距离`，限制在固件允许的
-  1.0–10.0。现场实测 `power=6` 约落在 5 m，因此 `gain=1.2`、`offset=0`（5 m → 6 档）。
-  每轮日志同时输出 `KICK_POWER distance=… power=…` 和 `KICK_TRAVEL target=… measured=…`，
-  可用实际球程继续校准 gain。
-  `kick_duration=7.0` 是技能本轮最长运行时间，不是机器人行走时间，也不是一次踢腿的完成反馈。
-- 球/状态失效、遮挡、取消、退出程序或到时，显式发送 `VisualKick(start=false)` 并停车。
-  本轮不自动重试；停止再启动才会开始下一次。
+- **比例力度控制**：`power = clamp(1.2 × 球到人的距离, 1, 10)`，启动动作时计算一次。系数可配置，实际距离受地面和固件影响。
+- **实时目标更新**：动作中每50毫秒更新 `/kick_ball` 的球位置、目标和方向。
+- **搜索进度保留**：未恢复有效接近决策前，不因短暂看到目标反复从头扫描。
+- **日志和测试**：发布状态，记录力度、估计球程和技能响应；包含控制逻辑与隔离 ROS 接口测试。
 
-主要新增代码：`controller.hpp` 是状态机；`person_pass_node.cpp` 负责 ROS 输入、SDK 请求和状态发布。
-测试 `controller_test.cpp` 不连接机器人；没有新增 Python 控制程序。
-`adapter_test.cpp` 在 ROS domain 83 中使用模拟输入，动作请求重映射到
-`/person_pass_test/requests`，分别验证预览拦截和请求序列；`/kick_ball` 也重映射到隔离测试话题，不连接真机动作通道。
+主要源码：`src/person_pass/include/person_pass/controller.hpp`（决策）、`search.hpp`（搜索）、`src/person_pass/src/person_pass_node.cpp`（ROS 与 SDK 适配）。
 
-## 编译与检查
+## 怎么运行
+
+环境：Booster K1、ROS 2 Humble、机器人现有 SDK 和匹配本机的 TensorRT 模型及标定。
+
+首次下载（模型和部分库使用 Git LFS）：
 
 ```bash
+git lfs install
+git clone https://github.com/Raphinha2006/K1_Person_Pass.git
+cd K1_Person_Pass
+git lfs pull
 ./scripts/build.sh
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-colcon test --packages-select person_pass vision --event-handlers console_direct+
-colcon test-result --verbose
 ```
 
-两项 `person_pass` 检查使用模拟检测，不能替代真实 Vision 启动检查。
-`vision_no_recording_startup` 在 K1 上实际加载 GPU 模型，并以 `save_data=false` 启动和退出 Vision；
-使用隔离的 ROS domain 83，不启动传球控制节点。合计应为三项检查。
-
-## 启动
-
-默认预览模式：
+在当前真机上启动：
 
 ```bash
-./scripts/start.sh
-```
-
-`dry_run=true` 会拦截全部运动、起身、转头、踢球和模式切换请求，只发布到 `/person_pass/preview`；
-踢球目标只发布到 `/person_pass/kick_preview`，不会提供给固件。
-预览模式不会模拟机器人模式反馈，因此没有真实就绪反馈时会停在初始化阶段。
-
-明确启用真机动作：
-
-```bash
+cd /home/booster/Workspace/K1_Person_Pass
 ./scripts/start.sh --real
 ```
 
-脚本发现其他 demo 节点运行时会拒绝启动，不会结束其他 demo。
-Ctrl+C 只停止本脚本启动的两个进程，控制节点退出前发送零速度。
+**启动脚本就是 `scripts/start.sh --real`**，同时启动 Vision 和传球节点，自动循环运行。按 **Ctrl+C** 停止。若提示 `Already running`，先退出其他 demo。
 
-状态、停止和重新触发：
+不加 `--real` 为预览模式，拦截运动及踢球目标输出，不驱动机器人；它不模拟就绪反馈。
+
+参数在 `config/person_pass.yaml`，修改后重启。日志在 `logs/person_pass.log` 和 `logs/vision.log`。改源码后重新运行 `./scripts/build.sh`。
+
+可选检查：
 
 ```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+colcon test --packages-select person_pass
+colcon test-result --verbose
 ros2 topic echo /person_pass/status
-ros2 service call /person_pass/enable std_srvs/srv/SetBool '{data: false}'
-ros2 service call /person_pass/enable std_srvs/srv/SetBool '{data: true}'
 ```
 
-参数在 `config/person_pass.yaml`。技能运行时由固件控制动作和速度，旧推球控制的速度限制参数已移除。
-启动参数为只读，修改配置后需要重启；运行中启停使用上述服务。
-日志中的 `VISUAL_KICK_REQUEST start=true version=1` 表示已发出技能请求；
-`VISUAL_KICK_RESPONSE start=true status=0` 才表示固件接受请求。
-仍应结合固件反馈的 planner 和现场踢腿动作确认执行，不能把请求本身当作踢球成功。
+已在真机完成交互测试，现场确认具备找人、找球和向人传球能力。固件返回成功代表接受技能请求，实际传球方向和落点仍以现场观察为准，后续可继续优化精度。
