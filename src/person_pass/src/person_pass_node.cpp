@@ -254,7 +254,8 @@ private:
             // Keep both targets in view: staring at the ball loses the receiver
             // standing to the side, which then blocks the pass handoff.
             const pp::Point target=(ball && person)
-                ? (static_cast<int>(t/.5)%2==0 ? i.ball : i.person)
+                ? ((stage==pp::Stage::Chase || stage==pp::Stage::Adjust
+                    || static_cast<int>(t/.5)%2==0) ? i.ball : i.person)
                 : (ball ? i.ball : i.person);
             yaw=std::atan2(target.y,target.x); pitch=std::atan2(.8,pp::length(target));
         } else {
