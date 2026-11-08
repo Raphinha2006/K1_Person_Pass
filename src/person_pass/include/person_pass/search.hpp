@@ -26,15 +26,23 @@ public:
                 : (!ball_fresh ? SearchTarget::Ball
                     : (!person_fresh && refresh ? SearchTarget::Person : SearchTarget::None));
         }
-        if (!allowed || target==SearchTarget::None) {
+        if (!allowed) {
             const bool stop=turning_ || acquired;
             reset();
             SearchOutput out; out.stop=stop; return out;
         }
+        if (target==SearchTarget::None) {
+            const bool stop=turning_ || acquired;
+            // A glimpse stops motion but preserves the scan budget until the
+            // node actually regains a valid approach or kick decision.
+            target_=SearchTarget::None; turning_=false;
+            SearchOutput out; out.stop=stop; return out;
+        }
+        if (since_<0) since_=now;
         const bool changed=target!=target_;
         const bool stop=acquired || (turning_ && (changed || !can_turn));
         if (changed) {
-            target_=target; since_=now;
+            target_=target;
             const Point last=target==SearchTarget::Ball ? last_ball : last_person;
             direction_=finite(last) && last.y>0 ? 1 : -1;
         }
@@ -44,12 +52,12 @@ public:
         static constexpr double yaws[]={1.1,0,-1.1,-1.1,0,1.1};
         turning_=can_turn && elapsed>=6;
         return {target_,true,stop,pitches[index],yaws[index],
-                turning_ ? std::min(.6,turn_limit)*direction_ : 0};
+                turning_ && !stop ? std::min(.6,turn_limit)*direction_ : 0};
     }
-    void reset() { target_=SearchTarget::None; since_=0; turning_=false; }
+    void reset() { target_=SearchTarget::None; since_=-1; turning_=false; }
 private:
     SearchTarget target_=SearchTarget::None;
-    double since_=0, direction_=-1;
+    double since_=-1, direction_=-1;
     bool turning_=false;
 };
 } // namespace person_pass

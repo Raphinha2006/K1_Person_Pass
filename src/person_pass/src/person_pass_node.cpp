@@ -297,6 +297,11 @@ private:
             ball_.stamp>=0 ? i.ball : pp::Point{},person_.stamp>=0 ? i.person : pp::Point{},
             !i.blocked && !controller_.coolingDown(t),config_.turn_limit,
             ball_memory,person_memory,out.stage==pp::Stage::WaitTargets && !controller_.coolingDown(t));
+        // Reset the scan budget only after observations support an approach.
+        // ALIGN/KICK and safety cancellations reset it through !search_allowed.
+        if (!search.head && !i.blocked && i.ball_fresh && i.scene_valid
+            && (out.stage==pp::Stage::Chase || out.stage==pp::Stage::Adjust))
+            search_.reset();
         // Stop on reacquisition before allowing approach on the following tick.
         // Kick never receives search Move commands; its native skill owns motion.
         if (search.head || (search.stop && out.stage!=pp::Stage::Kick)) {

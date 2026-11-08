@@ -62,7 +62,7 @@ int main() {
         s=search.tick(1,true,true,false,left,right,true,.6,true,true,true);
         check(s.target==SearchTarget::Person,"Refresh receiver before kick despite valid memory");
         s=search.tick(2,true,false,false,left,right,true,.6,true,true,true);
-        check(s.target==SearchTarget::Person && s.yaw==0,"Brief ball freshness loss must not restart receiver scan");
+        check(s.target==SearchTarget::Person && s.yaw==-1.1,"Brief ball freshness loss must not restart receiver scan");
         s=search.tick(3,true,false,false,left,right,true,.6,false,true,true);
         check(s.target==SearchTarget::Person,"Ball memory expiry must not interrupt receiver search");
         for (int k=4;k<=8;++k) {
@@ -86,6 +86,29 @@ int main() {
         search.reset();
         s=search.tick(40,false,false,false,left,right,true,.6);
         check(!s.head && s.turn==0,"Native kick never runs search even with missing targets");
+        search.reset();
+        search.tick(0,true,false,false,left,right,true,.6);
+        s=search.tick(5.5,true,true,true,left,right,true,.6,true,true);
+        check(!s.head && s.stop,"A brief reacquisition immediately stops search");
+        s=search.tick(6.1,true,true,false,left,right,true,.6,true,true,true);
+        check(s.target==SearchTarget::Person && s.turn==-.6,
+              "A glimpse without a valid approach must not restart a full head sweep");
+        s=search.tick(6.2,true,false,true,left,right,true,.6,false,true);
+        check(s.target==SearchTarget::Ball && s.stop && s.turn==0,
+              "Switching target stops motion even after scan budget is exhausted");
+        s=search.tick(6.3,true,false,true,left,right,true,.6,false,true);
+        check(s.turn==.6,"Next target reuses completed scan instead of repeating it");
+        search.reset(); // Node does this after valid CHASE/ADJUST or cancellation.
+        s=search.tick(10,true,false,false,left,right,true,.6);
+        check(s.turn==0 && s.yaw==1.1,"Valid approach resets the next search to one full scan");
+        for (double receiver_distance : {.9,.4}) {
+            Controller near; near.enable(true); Input n=scene();
+            n.person={n.ball.x+receiver_distance,0};
+            near.tick(n); n.now=.6;
+            check(near.tick(n).stage==Stage::Align,"Sub-metre receiver distance must allow alignment");
+            n.now=.81;
+            check(near.tick(n).action==Action::StartKick,"Sub-metre receiver distance must allow native kick");
+        }
         const Pose pose{3,-2,1.5707963267948966};
         const Point p{2,-1}; const Point q=toRobot(toOdom(p,pose),pose);
         check(std::hypot(p.x-q.x,p.y-q.y)<1e-10,"Odometry coordinate round trip");
@@ -206,7 +229,7 @@ int main() {
         i.scene_valid=true; i.blocked=true;
         check(waiting.tick(i).stage==Stage::Blocked,"Nearby obstacles must prevent a start");
         i.blocked=false; i.person={.5,-.2};
-        check(waiting.tick(i).stage==Stage::WaitTargets,"Receiver too close to the ball must not start a pass");
+        check(waiting.tick(i).stage==Stage::Adjust,"Nearby receiver still uses existing alignment correction");
         i.person={2.5,0}; i.ball={.5,0};
         check(waiting.tick(i).stage==Stage::Align,"Valid ball and receiver line up for a pass");
         bool rejected=false; try { Config c; c.kick_duration=0; Controller invalid(c); }
