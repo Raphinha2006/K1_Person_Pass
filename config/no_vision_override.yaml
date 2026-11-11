@@ -1,0 +1,3 @@
+# Empty Vision override: keep all settings from src/vision/config/vision.yaml.
+# Use an empty map, not a blank file, so MergeYAML leaves the base config intact.
+{}

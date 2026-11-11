@@ -61,7 +61,12 @@ cd /home/booster/Workspace/K1_Person_Pass
 
 不加 `--real` 为预览模式，拦截运动及踢球目标输出，不驱动机器人；它不模拟就绪反馈。
 
-参数在 `config/person_pass.yaml`，修改后重启。日志在 `logs/person_pass.log` 和 `logs/vision.log`。改源码后重新运行 `./scripts/build.sh`。
+参数在 `config/person_pass.yaml`，修改后重启。视觉基础配置在 `src/vision/config/vision.yaml`。
+`config/no_vision_override.yaml` 为 `{}` 空覆盖，不改变基础视觉参数和标定；
+`config/no_user_override.yaml` 是启动脚本保留的占位参数，当前 Vision 不读取它。
+两份文件均随仓库提供，无需自行创建。
+
+日志在 `logs/person_pass.log` 和 `logs/vision.log`。改源码后重新运行 `./scripts/build.sh`。
 
 可选检查：
 

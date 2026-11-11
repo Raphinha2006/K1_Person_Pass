@@ -1,0 +1,3 @@
+# Placeholder argument passed by scripts/start.sh.
+# The current Vision main.cpp does not read this third config argument.
+{}
